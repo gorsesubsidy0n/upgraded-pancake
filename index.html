@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Inspire Habits</title>
+<link href="style.css" rel="stylesheet"/>
+</head>
+<body>
+<div id="app">
+<!-- ══════════════════════════════════════════════
+     SCREEN 1: SETUP
+══════════════════════════════════════════════ -->
+<div class="screen active" id="setup-screen">
+<div class="hero">
+<div class="hero-icon">⚡</div>
+<h1>Inspire Habits</h1>
+<p class="subtitle">Professional workout builder for instructors &amp; classes</p>
+<!-- Profile Switcher -->
+<div class="profile-switcher-wrap">
+<div class="profile-switcher-label">Instructor:</div>
+<div class="profile-switcher" id="profile-switcher"></div>
+</div>
+<div class="hero-actions">
+<button class="hero-link studio-link" onclick="showStudioView()">🏢 Studio View</button>
+<button class="hero-link" onclick="showSchedule()">📅 Schedule</button>
+<button class="hero-link" onclick="showHistory()">📋 History</button>
+<button class="hero-link" onclick="openExerciseLibrary()">📚 Library</button>
+</div>
+</div>
+<div class="setup-grid">
+<!-- Participants -->
+<div class="card">
+<h2><span class="card-icon">👥</span> Participants</h2>
+<div class="participants-control">
+<button class="btn-circle" onclick="changeParticipants(-1)">−</button>
+<div class="participants-display">
+<span id="participant-count">8</span>
+<span class="participants-label">people</span>
+</div>
+<button class="btn-circle" onclick="changeParticipants(1)">+</button>
+</div>
+<input class="slider" id="participant-slider" max="16" min="1" oninput="syncParticipants(this.value)" type="range" value="8"/>
+<div class="slider-labels"><span>1</span><span>16</span></div>
+<div class="station-note" id="station-note" style="display:none"></div>
+</div>
+<!-- Difficulty -->
+<div class="card">
+<h2><span class="card-icon">⭐</span> Difficulty</h2>
+<div class="diff-grid">
+<button class="diff-btn" data-diff="b" onclick="selectDifficulty(this)">
+<span class="diff-icon">🌱</span>
+<div><span class="diff-name">Beginner</span><span class="diff-desc">Lower reps, easier moves</span></div>
+</button>
+<button class="diff-btn active" data-diff="i" onclick="selectDifficulty(this)">
+<span class="diff-icon">🔥</span>
+<div><span class="diff-name">Intermediate</span><span class="diff-desc">Moderate intensity</span></div>
+</button>
+<button class="diff-btn" data-diff="a" onclick="selectDifficulty(this)">
+<span class="diff-icon">💀</span>
+<div><span class="diff-name">Advanced</span><span class="diff-desc">High reps, complex moves</span></div>
+</button>
+</div>
+</div>
+<!-- Muscle Focus -->
+<div class="card">
+<h2><span class="card-icon">💪</span> Muscle Focus</h2>
+<div class="muscle-grid">
+<button class="muscle-btn active" data-muscle="full" onclick="selectMuscle(this)"><span>🏋️</span><span>Full Body</span></button>
+<button class="muscle-btn" data-muscle="upper" onclick="selectMuscle(this)"><span>💪</span><span>Upper</span></button>
+<button class="muscle-btn" data-muscle="lower" onclick="selectMuscle(this)"><span>🦵</span><span>Lower</span></button>
+<button class="muscle-btn" data-muscle="core" onclick="selectMuscle(this)"><span>🎯</span><span>Core</span></button>
+<button class="muscle-btn" data-muscle="cardio" onclick="selectMuscle(this)"><span>❤️</span><span>Cardio</span></button>
+<button class="muscle-btn" data-muscle="push" onclick="selectMuscle(this)"><span>⬆️</span><span>Push</span></button>
+<button class="muscle-btn" data-muscle="pull" onclick="selectMuscle(this)"><span>⬇️</span><span>Pull</span></button>
+<button class="muscle-btn" data-muscle="glutes" onclick="selectMuscle(this)"><span>🍑</span><span>Glutes</span></button>
+</div>
+</div>
+<!-- Duration -->
+<div class="card">
+<h2><span class="card-icon">⏱️</span> Duration</h2>
+<div class="duration-options">
+<button class="dur-btn" data-dur="20" onclick="selectDuration(this)">20 min</button>
+<button class="dur-btn active" data-dur="45" onclick="selectDuration(this)">45 min</button>
+<button class="dur-btn" data-dur="60" onclick="selectDuration(this)">60 min</button>
+</div>
+<div class="custom-dur-row">
+<label class="custom-dur-label">Custom:</label>
+<input class="custom-dur-input" id="custom-duration-val" max="120" min="5" onchange="setCustomDuration(this.value)" type="number" value="45"/>
+<span class="custom-dur-unit">min</span>
+</div>
+<div class="warmup-section">
+<div class="warmup-toggles">
+<label class="toggle-row">
+<input checked="" id="include-warmup" onchange="state.includeWarmup=this.checked" type="checkbox"/>
+<span class="toggle-label">🔥 Auto Warm-Up</span>
+</label>
+<label class="toggle-row">
+<input checked="" id="include-cooldown" onchange="state.includeCooldown=this.checked" type="checkbox"/>
+<span class="toggle-label">❄️ Auto Cool-Down (~5 min)</span>
+</label>
+</div>
+<div class="warmup-dur-row">
+<label class="warmup-dur-label">Warm-Up Duration:</label>
+<div class="warmup-dur-btns">
+<button class="wdur-btn" data-wdur="5" onclick="selectWarmupDur(this)">5 min</button>
+<button class="wdur-btn active" data-wdur="7" onclick="selectWarmupDur(this)">7 min</button>
+<button class="wdur-btn" data-wdur="10" onclick="selectWarmupDur(this)">10 min</button>
+</div>
+</div>
+</div>
+</div>
+<!-- Props -->
+<div class="card card-wide">
+<h2><span class="card-icon">🏋️</span> Available Props
+<button class="inv-open-btn" onclick="openInventory()" title="Edit what your studio owns">⚙️ Equipment</button></h2>
+<div class="props-grid"></div>
+<!-- Wood box info (all sizes assumed available) -->
+<div class="box-info-row" id="box-info-row" style="display:none">
+<div class="sub-prop-header">
+<span class="sub-prop-icon">📦</span>
+<span class="sub-prop-title">Wood Box</span>
+<span class="sub-prop-note">2 boxes available · all heights</span>
+</div>
+<div class="rb-attach-chips">
+<span class="rb-attach-chip">8"</span>
+<span class="rb-attach-chip">12"</span>
+<span class="rb-attach-chip">16"</span>
+</div>
+</div>
+</div>
+</div><!-- /setup-grid -->
+<button class="generate-btn" onclick="openStylePicker()">⚡ Choose Style &amp; Generate</button>
+</div>
+<!-- ══════════════════════════════════════════════
+     SCREEN 2: STYLE PICKER
+══════════════════════════════════════════════ -->
+<div class="screen" id="style-picker-screen">
+<div class="picker-header">
+<button class="back-btn" onclick="goBack()">← Back</button>
+<h2 class="picker-title">Choose Your Class Style</h2>
+<div></div>
+</div>
+<p class="picker-subtitle">Select the format that best fits your class today.</p>
+<div class="style-pick-grid">
+<button class="style-pick-btn style-pick-random" data-style="random" onclick="pickStyle('random')">
+<div class="spb-icon">🎲</div>
+<div class="spb-name">Random</div>
+<div class="spb-timing">Surprise me!</div>
+<div class="spb-desc">Let the app pick a style for you. A different format every time — keeps classes fresh and unpredictable.</div>
+<div class="spb-tags"><span class="spb-tag">Surprise</span><span class="spb-tag">Variety</span></div>
+</button>
+<button class="style-pick-btn" data-style="tabata" onclick="pickStyle('tabata')">
+<div class="spb-icon">🔥</div>
+<div class="spb-name">Tabata</div>
+<div class="spb-timing">20s work / 10s rest</div>
+<div class="spb-desc">8 rounds per exercise. Maximum intensity, short bursts. Great for fat burning and conditioning.</div>
+<div class="spb-tags"><span class="spb-tag">High Intensity</span><span class="spb-tag">Fat Burn</span></div>
+</button>
+<button class="style-pick-btn" data-style="circuit" onclick="pickStyle('circuit')">
+<div class="spb-icon">⚡</div>
+<div class="spb-name">Circuit</div>
+<div class="spb-timing">45s work / 15s rest</div>
+<div class="spb-desc">3 full rounds through all exercises. Balances strength and endurance. Most popular class format.</div>
+<div class="spb-tags"><span class="spb-tag">Balanced</span><span class="spb-tag">Beginner Friendly</span></div>
+</button>
+<button class="style-pick-btn" data-style="amrap" onclick="pickStyle('amrap')">
+<div class="spb-icon">🔄</div>
+<div class="spb-name">AMRAP</div>
+<div class="spb-timing">As Many Rounds As Possible</div>
+<div class="spb-desc">Complete the exercise list as many times as possible within the time cap. Self-paced and competitive.</div>
+<div class="spb-tags"><span class="spb-tag">Self-Paced</span><span class="spb-tag">Competitive</span></div>
+</button>
+<button class="style-pick-btn" data-style="emom" onclick="pickStyle('emom')">
+<div class="spb-icon">⏱️</div>
+<div class="spb-name">EMOM</div>
+<div class="spb-timing">2-3 exercises per minute · 40s work / 20s rest</div>
+<div class="spb-desc">Every Minute On the Minute. 5-9 exercises grouped 2-3 per minute. Core burner added if needed to fill time. Strict clock keeps the class moving.</div>
+<div class="spb-tags"><span class="spb-tag">Clock-Based</span><span class="spb-tag">Structured</span><span class="spb-tag">Efficient</span></div>
+</button>
+<button class="style-pick-btn" data-style="ladder" onclick="pickStyle('ladder')">
+<div class="spb-icon">📈</div>
+<div class="spb-name">Ladder</div>
+<div class="spb-timing">5 → 10 → 15 → 20 reps</div>
+<div class="spb-desc">Rep ladder that climbs each round. Builds muscular endurance and mental toughness.</div>
+<div class="spb-tags"><span class="spb-tag">Endurance</span><span class="spb-tag">Progressive</span></div>
+</button>
+<button class="style-pick-btn" data-style="pyramid" onclick="pickStyle('pyramid')">
+<div class="spb-icon">🔺</div>
+<div class="spb-name">Pyramid</div>
+<div class="spb-timing">5 → 10 → 15 → 20 → 15 → 10 → 5 reps</div>
+<div class="spb-desc">Climbs up to peak reps then descends back down. Tests endurance and mental toughness across 7 rounds.</div>
+<div class="spb-tags"><span class="spb-tag">Endurance</span><span class="spb-tag">Volume</span></div>
+</button>
+<button class="style-pick-btn" data-style="hundred" onclick="pickStyle('hundred')">
+<div class="spb-icon">💯</div>
+<div class="spb-name">100 Reps</div>
+<div class="spb-timing">10 exercises · 10 → 100 rep ladder</div>
+<div class="spb-desc">Pure volume challenge. Reps climb each exercise — 10, 20, 30 … up to 100, for 550 reps in total. Rest scales with the rep count.</div>
+<div class="spb-tags"><span class="spb-tag">Volume</span><span class="spb-tag">Challenge</span></div>
+</button>
+<button class="style-pick-btn" data-style="superset" onclick="pickStyle('superset')">
+<div class="spb-icon">💥</div>
+<div class="spb-name">Superset</div>
+<div class="spb-timing">40s work / 20s rest, paired</div>
+<div class="spb-desc">Exercises paired back-to-back with minimal rest. Maximizes muscle stimulus and time efficiency.</div>
+<div class="spb-tags"><span class="spb-tag">Strength</span><span class="spb-tag">Efficient</span></div>
+</button>
+<button class="style-pick-btn style-pick-ygig" data-style="ygig" onclick="pickStyle('ygig')">
+<div class="spb-icon">🤝</div>
+<div class="spb-name">You-Go-I-Go</div>
+<div class="spb-timing">Partner alternating reps</div>
+<div class="spb-desc">Person A does the harder exercise for reps while Person B holds an active rest. Switch when reps are done. Requires 2+ participants.</div>
+<div class="spb-tags"><span class="spb-tag">Partner</span><span class="spb-tag">Competitive</span><span class="spb-tag">Fun</span></div>
+</button>
+<button class="style-pick-btn style-pick-custom" data-style="custom" onclick="pickStyle('custom')">
+<div class="spb-icon">🛠️</div>
+<div class="spb-name">Custom</div>
+<div class="spb-timing">You set the rounds, work, rest & reps</div>
+<div class="spb-desc">Start from a generated plan, then change anything — swap or add exercises, pick props, and set work/rest or reps per exercise. The timer follows exactly what you build.</div>
+<div class="spb-tags"><span class="spb-tag">Full Control</span><span class="spb-tag">Your Format</span></div>
+</button>
+</div><!-- /style-pick-grid -->
+<div class="picker-footer">
+<div class="style-selected-preview" id="style-selected-preview" style="display:none">
+<span id="style-selected-text"></span>
+</div>
+<button class="generate-btn" onclick="confirmStyleAndGenerate()">⚡ Generate Plan</button>
+</div>
+</div>
+<!-- ══════════════════════════════════════════════
+     SCREEN 3: PLAN EDITOR
+══════════════════════════════════════════════ -->
+<div class="screen" id="plan-editor-screen">
+<div class="workout-header">
+<button class="back-btn" onclick="showScreen('style-picker-screen')">← Style</button>
+<div class="workout-meta">
+<span class="badge-style" id="plan-style-badge"></span>
+<span class="badge-muscle" id="plan-muscle-badge"></span>
+<span class="badge-people" id="plan-people-badge"></span>
+<span class="badge-diff" id="plan-diff-badge"></span>
+</div>
+<div class="header-actions">
+<button class="icon-btn sound-toggle-btn" onclick="toggleSound()" title="Audio cues">🔊</button>
+<button class="icon-btn" onclick="openSavePlanModal()" title="Save Plan">💾</button>
+<button class="icon-btn" onclick="exportPDF()" title="PDF">📄</button>
+</div>
+</div>
+<div class="editor-banner">
+<div class="editor-banner-icon">✏️</div>
+<div>
+<div class="editor-banner-title">Review &amp; Edit Your Plan</div>
+<div class="editor-banner-sub">✏️ Edit · ⇄ Swap · ✕ Remove · ➕ Add exercises before going live.</div>
+</div>
+</div>
+<div class="coverage-panel" id="muscle-coverage-panel"></div>
+<div class="style-desc-box" id="plan-style-desc"></div>
+<div class="station-note" id="plan-station-note" style="display:none;margin-bottom:12px"></div>
+<div class="exercises-container" id="plan-exercises"></div>
+<div class="editor-actions">
+<button class="action-btn secondary" onclick="generateWorkout()">🔄 Regenerate</button>
+<button class="action-btn secondary" onclick="exportPDF()">📄 PDF</button>
+<button class="action-btn secondary" id="qr-plan-btn" onclick="showClassQR()" style="display:none">📱 Scan to Track</button>
+<button class="action-btn instructor-btn" onclick="openInstructorView()">🎓 Instructor View</button>
+<button class="action-btn go-live-btn" onclick="goLive()">📺 Go Live →</button>
+</div>
+</div>
+<!-- ══════════════════════════════════════════════
+     SCREEN 4: INSTRUCTOR TIMER
+══════════════════════════════════════════════ -->
+<div class="screen" id="timer-screen">
+<div class="timer-header">
+<button class="back-btn" onclick="goToPlanEditor()">← Plan</button>
+<h2 id="timer-style-name"></h2>
+<div class="timer-header-right">
+<button class="icon-btn" id="qr-share-btn" onclick="showClassQR()" style="display:none">📱 Scan to Track</button>
+<button class="icon-btn" onclick="switchToParticipant()">📺 Class View</button>
+<button class="back-btn danger" onclick="goBack()">✕ Exit</button>
+</div>
+</div>
+<div class="timer-layout">
+<div class="timer-main-col">
+<div class="round-indicator"><span id="current-round"></span><span id="total-rounds"></span></div>
+<div class="exercise-display">
+<div class="phase-label get-ready" id="timer-phase">GET READY</div>
+<div class="exercise-name-big" id="timer-exercise"></div>
+<div class="exercise-prop-tag" id="timer-prop" style="display:none"></div>
+<div class="timer-cue" id="timer-cue" style="display:none"></div>
+</div>
+<div class="ygig-partner-info" id="ygig-partner-info" style="display:none"></div>
+<div class="timer-circle">
+<svg class="timer-svg" viewbox="0 0 200 200">
+<circle class="timer-track" cx="100" cy="100" r="90"></circle>
+<circle class="timer-progress" cx="100" cy="100" id="timer-arc" r="90"></circle>
+</svg>
+<div class="timer-center">
+<div class="timer-digits" id="timer-display">00</div>
+<div class="timer-unit">seconds</div>
+</div>
+</div>
+<div class="next-up" id="next-up-box">
+<span class="next-label">Next:</span><span id="next-exercise"></span>
+</div>
+<div class="timer-controls">
+<button class="ctrl-btn" onclick="prevExercise()">⏮</button>
+<button class="ctrl-btn large" id="play-pause-btn" onclick="toggleTimer()">⏸</button>
+<button class="ctrl-btn" onclick="nextExercise()">⏭</button>
+</div>
+<div class="progress-bar-wrap"><div class="progress-bar-fill" id="overall-progress"></div></div>
+<div class="progress-label" id="progress-label"></div>
+</div>
+<div class="instructor-sidebar">
+<div class="sidebar-title">📋 Exercise List</div>
+<div class="sidebar-list" id="sidebar-exercise-list"></div>
+</div>
+</div>
+</div>
+<!-- ══════════════════════════════════════════════
+     SCREEN 5: PARTICIPANT / CLASS LIVE VIEW
+══════════════════════════════════════════════ -->
+<div class="screen participant-bg" id="participant-screen">
+<div class="p-header">
+<span class="p-title" id="p-title-label">⚡ LIVE CLASS</span>
+<div class="p-header-actions">
+<button class="p-back-btn" id="qr-live-btn" onclick="showClassQR()" style="display:none">📱 Scan to Track</button>
+<button class="p-back-btn p-instructor-btn" onclick="switchToInstructor()">🎓</button>
+</div>
+</div>
+<!-- Mixed-ability group banner -->
+<div class="ma-group-banner" id="ma-group-banner" style="display:none"></div>
+<div class="p-body" id="p-body">
+<div class="p-phase-label neutral" id="p-phase">GET READY</div>
+<!-- Standard single-exercise display -->
+<div class="p-exercise-wrap" id="p-exercise-wrap">
+<div class="p-exercise-name" id="p-exercise">Loading…</div>
+<div class="p-prop-tag" id="p-prop" style="display:none"></div>
+</div>
+<!-- MA 3-zone display -->
+<div class="ma-live-zones" id="ma-live-zones" style="display:none"></div>
+<div class="p-timer-circle" id="p-timer-circle">
+<div class="p-timer-digits" id="p-timer">00</div>
+<div class="p-timer-unit">seconds</div>
+</div>
+<div class="p-next-label" id="p-next"></div>
+</div>
+<div class="p-controls">
+<button class="ctrl-btn large" id="p-play-pause" onclick="toggleTimer()">⏸</button>
+</div>
+<div class="progress-bar-wrap p-progress"><div class="progress-bar-fill" id="p-overall-progress"></div></div>
+</div>
+<!-- ══════════════════════════════════════════════
+     SCREEN: STUDIO VIEW
+══════════════════════════════════════════════ -->
+<div class="screen" id="studio-screen">
+  <div class="workout-header">
+    <button class="back-btn" onclick="goBack()">← Back</button>
+    <h2 class="screen-title">🏢 Studio View</h2>
+    <div class="studio-header-right">
+      <span class="studio-readonly-badge">📖 Read Only</span>
+    </div>
+  </div>
+
+  <!-- Instructor Stats Cards -->
+  <div class="studio-section-title">👥 Instructor Overview</div>
+  <div id="studio-stats" class="studio-stats-grid"></div>
+
+  <!-- Full Schedule -->
+  <div class="studio-section-title">📅 All Classes — Chronological</div>
+  <div id="studio-schedule" class="schedule-list"></div>
+</div>
+
+<!-- ══════════════════════════════════════════════
+     SCREEN: CLASS SCHEDULE
+══════════════════════════════════════════════ -->
+<div class="screen" id="schedule-screen">
+<div class="workout-header">
+<button class="back-btn" onclick="goBack()">← Back</button>
+<h2 class="screen-title">📅 Class Schedule</h2>
+<div class="export-import-controls">
+<button class="icon-btn export-btn" onclick="exportToFolder()" title="Export to folder or download">📤 Export</button>
+<button class="icon-btn import-btn" onclick="triggerImportJSON()" title="Import from file">📥 Import</button>
+</div>
+</div>
+<!-- Folder Sync Panel -->
+<div class="folder-sync-panel">
+<div class="folder-sync-row">
+<div class="folder-sync-left">
+<span class="folder-sync-status folder-sync-off" id="folder-sync-status">○ No folder linked</span>
+<span class="folder-sync-name" id="folder-sync-name"></span>
+</div>
+<div class="folder-sync-actions">
+<button class="folder-btn folder-set-btn" onclick="pickSyncFolder()" title="Pick a sync folder">📂 Set Folder</button>
+<button class="folder-btn folder-export-btn" id="folder-export-btn" onclick="exportToFolder()" style="display:none" title="Export to linked folder">📤 Save to Folder</button>
+<button class="folder-btn folder-check-btn" id="folder-check-btn" onclick="checkFolderForNewFiles()" style="display:none" title="Check folder for new JSON files">🔄 Check for New</button>
+<button class="folder-btn folder-clear-btn" id="folder-clear-btn" onclick="clearSyncFolder()" style="display:none" title="Unlink folder">✕ Unlink</button>
+</div>
+</div>
+<div class="folder-last-check" id="folder-last-check"></div>
+<div class="folder-unsupported" id="folder-unsupported-msg" style="display:none">
+      ⚠️ Folder sync requires Chrome or Edge. Use 📤 Export / 📥 Import buttons instead.
+    </div>
+</div>
+<!-- Profile filter tabs -->
+<div class="schedule-filter-row" id="schedule-filter-btns"></div>
+<!-- Schedule list -->
+<div class="schedule-list" id="schedule-list"></div>
+</div>
+<!-- ══════════════════════════════════════════════
+     SCREEN 6: HISTORY / SAVED
+══════════════════════════════════════════════ -->
+<div class="screen" id="history-screen">
+<div class="workout-header">
+<button class="back-btn" onclick="goBack()">← Back</button>
+<h2 class="screen-title">📋 Saved &amp; History</h2>
+<div></div>
+</div>
+<div class="history-tabs">
+<button class="htab active" onclick="switchHistoryTab(this,'saved-panel')">💾 Saved Workouts</button>
+<button class="htab" onclick="switchHistoryTab(this,'history-panel')">🕐 Workout History</button>
+<button class="htab" onclick="switchHistoryTab(this,'load-panel');renderTrainingLoad()">📊 Training Load</button>
+</div>
+<div class="history-panel active" id="saved-panel"><div id="saved-list"></div></div>
+<div class="history-panel" id="history-panel"><div id="history-list"></div></div>
+<div class="history-panel" id="load-panel"><div id="training-load"></div></div>
+</div>
+<!-- ══════════════════════════════════════════════
+     SCREEN 7: EXERCISE LIBRARY
+══════════════════════════════════════════════ -->
+<div class="screen" id="library-screen">
+<div class="workout-header">
+<button class="back-btn" onclick="goBack()">← Back</button>
+<h2 class="screen-title">📚 Exercise Library</h2>
+<button class="icon-btn accent-btn" onclick="openAddExerciseModal()">➕ Add Exercise</button>
+</div>
+<div class="library-filters">
+<button class="lib-filter active" data-filter="all" onclick="filterLibrary(this)">All</button>
+<button class="lib-filter" data-filter="warmup" onclick="filterLibrary(this)">🔥 Warm-Up</button>
+<button class="lib-filter" data-filter="core" onclick="filterLibrary(this)">🎯 Core</button>
+<button class="lib-filter" data-filter="upper" onclick="filterLibrary(this)">💪 Upper</button>
+<button class="lib-filter" data-filter="lower" onclick="filterLibrary(this)">🦵 Lower</button>
+<button class="lib-filter" data-filter="glutes" onclick="filterLibrary(this)">🍑 Glutes</button>
+<button class="lib-filter" data-filter="full" onclick="filterLibrary(this)">🏋️ Full Body</button>
+<button class="lib-filter" data-filter="cardio" onclick="filterLibrary(this)">❤️ Cardio</button>
+<button class="lib-filter" data-filter="cooldown" onclick="filterLibrary(this)">❄️ Cool-Down</button>
+<button class="lib-filter" data-filter="custom" onclick="filterLibrary(this)">⭐ Custom</button>
+</div>
+<div class="library-list" id="library-list"></div>
+</div>
+<!-- ══════════════════════════════════════════════
+     MODAL: FOLDER FILES PICKER
+══════════════════════════════════════════════ -->
+<div class="modal-overlay" id="folder-files-modal" onclick="if(event.target===this)closeFolderFilesModal()" style="display:none">
+<div class="modal-box">
+<div class="modal-header">
+<h3>📂 Files in Sync Folder</h3>
+<button class="modal-close" onclick="closeFolderFilesModal()">✕</button>
+</div>
+<div class="modal-body">
+<p class="modal-hint">Select a file to import. Latest file is shown first.</p>
+<div class="folder-files-list" id="folder-files-list"></div>
+</div>
+<div class="modal-footer">
+<button class="action-btn secondary" onclick="closeFolderFilesModal()">Cancel</button>
+</div>
+</div>
+</div>
+<!-- ══════════════════════════════════════════════
+     MODAL: IMPORT PREVIEW
+══════════════════════════════════════════════ -->
+<div class="modal-overlay" id="import-preview-modal" onclick="if(event.target===this)closeImportModal()" style="display:none">
+<div class="modal-box">
+<div class="modal-header">
+<h3>📥 Import Class Plans</h3>
+<button class="modal-close" onclick="closeImportModal()">✕</button>
+</div>
+<div class="modal-body">
+<div class="import-file-info">
+<div class="import-info-row"><span class="import-info-label">File:</span><span class="import-info-val" id="import-file-name"></span></div>
+<div class="import-info-row"><span class="import-info-label">Exported:</span><span class="import-info-val" id="import-exported-at"></span></div>
+</div>
+<div class="import-preview-header">Plans found:</div>
+<div class="import-preview-list" id="import-preview-list"></div>
+<div class="import-mode-info">
+<div class="import-mode-row">
+<span class="import-mode-icon">🔀</span>
+<div><b>Merge</b> — adds new plans, keeps existing ones (skips duplicates)</div>
+</div>
+<div class="import-mode-row">
+<span class="import-mode-icon">♻️</span>
+<div><b>Replace</b> — overwrites all existing plans with imported ones</div>
+</div>
+</div>
+</div>
+<div class="modal-footer">
+<button class="action-btn secondary" onclick="closeImportModal()">Cancel</button>
+<button class="action-btn secondary" onclick="confirmImport('replace')">♻️ Replace All</button>
+<button class="action-btn primary" onclick="confirmImport('merge')">🔀 Merge</button>
+</div>
+</div>
+</div>
+<!-- ══════════════════════════════════════════════
+     MODAL: SAVE CLASS PLAN
+══════════════════════════════════════════════ -->
+<div class="modal-overlay" id="save-plan-modal" onclick="if(event.target===this)closeSavePlanModal()" style="display:none">
+<div class="modal-box">
+<div class="modal-header">
+<h3>💾 Save Class Plan</h3>
+<button class="modal-close" onclick="closeSavePlanModal()">✕</button>
+</div>
+<div class="modal-body">
+<div class="save-plan-profile-row">
+<span class="save-plan-for-label">Saving for:</span>
+<span class="save-profile-label" id="plan-save-profile-label"></span>
+</div>
+<div class="form-group">
+<label class="form-label">Class Date *</label>
+<input class="form-input" id="plan-save-date" type="date"/>
+</div>
+<div class="form-group">
+<label class="form-label">Class Time *</label>
+<input class="form-input" id="plan-save-time" type="time"/>
+</div>
+<div class="form-group">
+<label class="form-label">Notes (optional)</label>
+<input class="form-input" id="plan-save-notes" placeholder="e.g. Studio A, bring extra mats" type="text"/>
+</div>
+</div>
+<div class="modal-footer">
+<button class="action-btn secondary" onclick="closeSavePlanModal()">Cancel</button>
+<button class="action-btn primary" onclick="confirmSavePlan()">💾 Save Plan</button>
+</div>
+</div>
+</div>
+<!-- ══════════════════════════════════════════════
+     MODAL: ADD / EDIT EXERCISE (Multi-Step)
+══════════════════════════════════════════════ -->
+<div class="modal-overlay" id="exercise-modal" onclick="if(event.target===this)closeExerciseModal()" style="display:none">
+<div class="modal-box modal-lg">
+<!-- Step 1: Choose Category -->
+<div class="modal-step" id="modal-step-1">
+<div class="modal-header">
+<h3 id="modal-title-1">➕ Add Exercise — Step 1 of 2</h3>
+<button class="modal-close" onclick="closeExerciseModal()">✕</button>
+</div>
+<div class="modal-body">
+<p class="modal-hint">What kind of exercise do you want to add?</p>
+<div class="category-grid">
+<button class="cat-btn" data-cat="warmup" onclick="selectExCategory(this)"><span class="cat-icon">🔥</span><span class="cat-name">Warm-Up</span><span class="cat-desc">Dynamic mobility, activation</span></button>
+<button class="cat-btn" data-cat="core" onclick="selectExCategory(this)"><span class="cat-icon">🎯</span><span class="cat-name">Core</span><span class="cat-desc">Abs, obliques, stability</span></button>
+<button class="cat-btn" data-cat="upper" onclick="selectExCategory(this)"><span class="cat-icon">💪</span><span class="cat-name">Upper Body</span><span class="cat-desc">Chest, back, shoulders, arms</span></button>
+<button class="cat-btn" data-cat="lower" onclick="selectExCategory(this)"><span class="cat-icon">🦵</span><span class="cat-name">Lower Body</span><span class="cat-desc">Quads, hamstrings, calves</span></button>
+<button class="cat-btn" data-cat="glutes" onclick="selectExCategory(this)"><span class="cat-icon">🍑</span><span class="cat-name">Glutes</span><span class="cat-desc">Glute max, med, hip work</span></button>
+<button class="cat-btn" data-cat="full" onclick="selectExCategory(this)"><span class="cat-icon">🏋️</span><span class="cat-name">Full Body</span><span class="cat-desc">Multi-joint compound moves</span></button>
+<button class="cat-btn" data-cat="cardio" onclick="selectExCategory(this)"><span class="cat-icon">❤️</span><span class="cat-name">Cardio</span><span class="cat-desc">Conditioning, agility, power</span></button>
+<button class="cat-btn" data-cat="cooldown" onclick="selectExCategory(this)"><span class="cat-icon">❄️</span><span class="cat-name">Cool-Down</span><span class="cat-desc">Static stretches, breathing</span></button>
+</div>
+</div>
+<div class="modal-footer">
+<button class="action-btn secondary" onclick="closeExerciseModal()">Cancel</button>
+<button class="action-btn primary" disabled="" id="step1-next" onclick="goToExStep2()">Next →</button>
+</div>
+</div>
+<!-- Step 2: Fill in Details -->
+<div class="modal-step" id="modal-step-2" style="display:none">
+<div class="modal-header">
+<h3 id="modal-title-2">➕ Add Exercise — Step 2 of 2</h3>
+<button class="modal-close" onclick="closeExerciseModal()">✕</button>
+</div>
+<div class="modal-body" id="modal-step2-body">
+<!-- Dynamically populated based on category -->
+</div>
+<div class="modal-footer">
+<button class="action-btn secondary" onclick="goToExStep1()">← Back</button>
+<button class="action-btn primary" id="save-ex-btn" onclick="saveExercise()">Save Exercise</button>
+</div>
+</div>
+</div>
+</div>
+<!-- ══════════════════════════════════════════════
+     EQUIPMENT INVENTORY
+══════════════════════════════════════════════ -->
+<div class="inv-modal" id="inventory-modal" style="display:none" onclick="if(event.target===this)closeInventory()">
+<div class="inv-sheet">
+<div class="inv-header">
+<div class="inv-title">🏋️ Studio Equipment</div>
+<button class="inv-close" onclick="closeInventory()">✕</button>
+</div>
+<div class="inv-body" id="inventory-body"></div>
+<div class="inv-footer">
+<button class="action-btn secondary" onclick="resetInventory()">↺ Reset</button>
+<button class="action-btn secondary" onclick="closeInventory()">Cancel</button>
+<button class="action-btn" onclick="saveInventoryDefaults()">💾 Save as Default</button>
+</div>
+</div>
+</div>
+
+<!-- ══════════════════════════════════════════════
+     SCAN-TO-TRACK: QR modal (instructor) + athlete screen
+══════════════════════════════════════════════ -->
+<div class="qr-modal" id="qr-modal" style="display:none" onclick="if(event.target===this)closeClassQR()">
+<div class="qr-modal-inner">
+<button class="modal-close qr-close" onclick="closeClassQR()">✕</button>
+<div id="qr-modal-body"></div>
+</div>
+</div>
+</div>
+<!-- /#app -->
+<div class="screen" id="athlete-screen"><div id="athlete-root"></div></div>
+<script src="exercise-db.js"></script>
+<script src="muscle-map.js"></script>
+<script src="qr.js"></script>
+<script src="app.js"></script>
+<script src="programming.js"></script>
+<script src="editor.js"></script>
+<script src="mixed_ability.js"></script>
+<script src="profiles.js"></script>
+<script src="participant.js"></script>
+<script>
+function switchHistoryTab(btn, panelId) {
+  document.querySelectorAll('.htab').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.history-panel').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById(panelId).classList.add('active');
+}
+
+</script>
+</body>
+</html>

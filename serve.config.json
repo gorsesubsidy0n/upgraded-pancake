@@ -1,0 +1,21 @@
+{
+  "_comment": "Settings for node serve.js. Edit, save, then restart. Delete this file to reset.",
+
+  "_help_port": "Port number to serve on (1-65535).",
+  "port": 8080,
+
+  "_help_host": "Address to listen on. 0.0.0.0 = reachable by phones, 127.0.0.1 = this computer only.",
+  "host": "0.0.0.0",
+
+  "_help_open": "Open a browser window when the server starts (true/false).",
+  "open": true,
+
+  "_help_openAddress": "Which address to open: 'wifi', 'localhost', or 'none'.",
+  "openAddress": "wifi",
+
+  "_help_wifiAddress": "Pin the address shown for phones. Empty means detect it.",
+  "wifiAddress": "",
+
+  "_help_autoPort": "If the port is busy, try the next one (true/false).",
+  "autoPort": true
+}
