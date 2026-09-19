@@ -33,8 +33,8 @@ const AUTH = {
   salt: 'inspire-habits',
 
   // ── PASTE NEW CODE LINES BELOW THIS LINE ──
-  instructor: 'e2a80b930b539702b03a32b99acd68f340fbffbc81a46b4a8155dd0b251f9e34',
-  athlete:    'c0b1a2b3208aef1fa772c83a201cc83e75878e9301d005979ba507c066b8b3cc',
+instructor: '39ec3842482a6a1c4cef3213419ad6f12c5d42ee8bb6aa2ee209defd1f88b9d7',
+ athlete:    '67aadf3bdcec140806e6e2e247960412b72105a7b872a659d9afb55db794b6a7',
   // ── PASTE NEW CODE LINES ABOVE THIS LINE ──
 };
 
