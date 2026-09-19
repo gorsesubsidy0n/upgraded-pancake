@@ -71,6 +71,60 @@ save, restart.
 
 ---
 
+## Sharing a laptop
+
+Every time the app opens it asks **"Who's teaching?"** and you tap your
+name. Nothing loads until you do.
+
+This matters because the studio laptop gets passed around. Each instructor
+gets her own:
+
+- saved classes
+- roster / mixed-ability groups
+- crash recovery if a class is interrupted
+
+So Carson's list is never mixed into Kat's, and neither can overwrite the
+other. Equipment and any custom exercises you add stay **shared** — those
+describe the studio, not the person.
+
+### Class history is shared on purpose
+
+**Classes you actually teach are the one exception.** The moment a class goes
+live it's written to a single studio log that all three of you see, tagged
+with who ran it:
+
+> 🌠 Kat · you  — Tabata · Full Body · 45 min
+
+Your own classes carry a **· you** and sit in your accent colour, so your
+work is still easy to pick out of the shared list.
+
+This exists because the athletes are the same people whoever is on the floor.
+If Kat hammers glutes on Monday, Carson needs to see that before she programs
+Tuesday — otherwise the room gets the same accessory work twice and the
+rotation the app is built around stops meaning anything.
+
+It follows that **accessory rotation now varies against every class the room
+did**, not just your own. Saved (unpublished) classes are *not* included —
+only classes actually taught — so drafting a class never skews anyone's
+programming.
+
+The log holds the last 150 classes, shared three ways.
+
+The answer is remembered for that sitting only. Refreshing mid-class won't
+re-ask, but closing the browser will. That's deliberate: the next person to
+open it is always asked, rather than quietly saving into your list.
+
+To hand over without closing the browser, tap another name in the
+**Instructor:** row on the front screen. It won't let you switch in the
+middle of a live class — stop the class first.
+
+> If you've been using the app already, your existing saved classes move
+> across to whoever was last selected, and every class already in your
+> history is folded into the shared log under the right name — nothing is
+> lost and nothing is credited to the wrong person.
+
+---
+
 ## Access codes
 
 The app asks for a code before it shows anything. There are two:
@@ -80,8 +134,17 @@ The app asks for a code before it shows anything. There are two:
 | **Instructor** | The whole builder — generate, edit, save, run class, equipment |
 | **Athlete** | Their own tracking page for the class they were sent, nothing else |
 
-It ships with **`coach2026`** and **`class2026`**. Change both before you
-rely on them — everyone reading this file knows them.
+**Both codes have been changed** from the ones this app shipped with.
+Neither is written down anywhere in these files — only a salted SHA-256
+hash of each lives in `auth.js`, and a hash can't be turned back into the
+code. If you forget one, you don't recover it; you set a new one (below).
+
+> Never paste a real code into this README, a commit message, or an issue.
+> This repository is public, and anything written here is published with the
+> app. Only the hash belongs in the files.
+
+The lock screen warns you whenever either code is still a shipped default,
+and names which one. No warning means both have been changed.
 
 An athlete who opens the bare site without a class link gets a
 "nothing to track yet" screen rather than your builder.
@@ -233,6 +296,31 @@ round when a move repeats.
 If you show the code *before* tapping Go Live, athletes get a **▶ Start with
 the class** button instead. They tap it when you start.
 
+### Sound
+
+The **🔊 / 🔇** button sits in the top-right of three places: your **timer
+screen**, your **class view** (the one you cast to the TV), and each
+athlete's **phone**. It turns on a short tone at the start of every work and
+rest interval, three beeps counting into a change, and a chord at the end.
+
+The two sides are deliberately set up differently:
+
+| | Default | Why |
+|---|---|---|
+| Your laptop | **On** | It's the room's cue — everyone hears one clock. |
+| Athlete phones | **Off** | A dozen handsets a half-second apart is noise, not a cue. |
+
+They're stored separately, so muting your laptop never mutes the room's
+phones and an athlete turning hers on doesn't touch yours. Each choice sticks
+on that device until it's changed.
+
+Athletes who'd rather feel it than hear it can leave sound off — phones
+already buzz at the start of each work interval regardless.
+
+> Phones only make sound after the athlete taps the button themselves.
+> Browsers refuse to play audio until someone on that device asks for it, so
+> there is no way to switch the room's phones on from your laptop.
+
 ---
 
 ## Pyramid and Ladder — choosing the climb
@@ -279,6 +367,10 @@ The last **20** classes are kept, newest first. They live in this browser
 on this laptop, so they won't follow you to another machine, and clearing
 your browsing data clears them.
 
+Saved classes are **private to you** — they're filed under whoever tapped
+their name when the app opened. Build at home, teach from the studio
+laptop, and nobody else's list gets in the way.
+
 ---
 
 ## Setting up your equipment
@@ -310,7 +402,7 @@ back if you put a number in later.
 | `mixed_ability.js` | Beginner / Intermediate / Advanced handling |
 | `editor.js` | Plan editing |
 | `participant.js` | The class share link and the athlete phone pages |
-| `profiles.js` | Instructor profiles |
+| `profiles.js` | Instructor profiles and the "Who's teaching?" picker |
 | `auth.js` | The two access codes |
 | `style.css` | Appearance |
 | `serve.js` | Optional local server (Option 2 above) |
@@ -343,5 +435,13 @@ and use the **"On phones (same wifi)"** address the server printed instead
 
 **A phone says the class link looks damaged** — the published copy is
 older than the app you're building with. Re-upload the folder.
+
+**My saved classes have vanished** — check the **Instructor:** row on the
+front screen shows *your* name. Saved classes are per-instructor, so if
+someone else's name is selected you're looking at their list. Tap your own
+name to get yours back.
+
+**It keeps asking who's teaching** — that's on purpose, once per opening of
+the browser. It won't ask again on a refresh.
 
 **I want my equipment numbers back** — ⚙️ Equipment → **↺ Reset**.

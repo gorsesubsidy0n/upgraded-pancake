@@ -1251,7 +1251,10 @@
           '</span>' +
           '<span class="ath-id-swap">⇄</span>' +
         '</button>' +
-        '<button class="ath-reset" id="ath-reset" title="Clear my progress">Reset</button>' +
+        '<div class="ath-head-btns">' +
+          '<button class="ath-sound sound-toggle-btn" id="ath-sound" type="button" title="Audio cues">🔇</button>' +
+          '<button class="ath-reset" id="ath-reset" title="Clear my progress">Reset</button>' +
+        '</div>' +
       '</div>' +
       renderClassClock() +
       main() +
@@ -1263,6 +1266,10 @@
 
   function bind() {
     const on = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
+
+    on('ath-sound', () => { if (typeof toggleSound === 'function') toggleSound(); });
+    // Rendered fresh on every render(), so the icon has to be re-synced.
+    if (typeof syncSoundButtons === 'function') syncSoundButtons();
 
     on('ath-start-btn', () => { prog.startedAt = Date.now(); persist(); requestWake(); render(); });
     on('ath-clock-start', () => { prog.classStart = Date.now(); prog.syncOffset = 0; persist(); requestWake(); render(); });
@@ -1446,7 +1453,26 @@
       const card = document.getElementById('ath-clock-card');
       if (card) card.className = 'ath-card ath-clock phase-' + pos.step.phase;
       if (pos.step.phase === 'work' && navigator.vibrate) navigator.vibrate(40);
+      athCue(pos.step.phase);
+      lastBeepSec = -1;
     }
+    athCountdown(pos.left);
+  }
+
+  // Audio is opt-in on a phone, so all of this is silent unless the athlete
+  // turned it on. audioCue lives in app.js, which loads here too.
+  let lastBeepSec = -1;
+  function athCue(phase) {
+    if (typeof audioCue === 'undefined' || !audioCue.enabled) return;
+    if (phase === 'work') audioCue.startWork();
+    else if (phase === 'rest') audioCue.startRest();
+  }
+  function athCountdown(left) {
+    if (typeof audioCue === 'undefined' || !audioCue.enabled) return;
+    const s = Math.ceil(left);
+    if (s === lastBeepSec) return;
+    lastBeepSec = s;
+    if (s > 0 && s <= 3) audioCue.countdown();
   }
 
   // Only the clock line ticks, so typing a rep count is never interrupted.
@@ -1468,6 +1494,7 @@
             const lbl = document.getElementById('ath-countdown-label');
             if (lbl) lbl.textContent = 'cap reached';
             if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
+            if (typeof audioCue !== 'undefined' && audioCue.enabled) audioCue.finish();
           }
           clearInterval(tickHandle); tickHandle = null;
         }
