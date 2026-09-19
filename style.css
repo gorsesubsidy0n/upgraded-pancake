@@ -1895,3 +1895,102 @@ body.athlete-mode #app { display: none; }
 .ath-id-text .ath-title { font-size: 11px; color: var(--slate);
                           overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ath-id-swap { flex-shrink: 0; margin-left: 2px; font-size: 13px; color: var(--slate); }
+
+/* ─── ACCESS GATE ────────────────────────────────────────────
+   Hidden rather than unrendered so the app behind is untouched. */
+html.ih-locked #app,
+html.ih-locked #athlete-screen { display: none !important; }
+html.ih-locked, html.ih-locked body { overflow: hidden; }
+
+#ih-lock {
+  position: fixed; inset: 0; z-index: 9999;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px; background: var(--bg);
+  overflow-y: auto;
+}
+.ih-lock-card {
+  width: 100%; max-width: 400px; text-align: center;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 36px 28px;
+  box-shadow: 0 18px 48px rgba(0,0,0,.45);
+}
+.ih-lock-icon { font-size: 44px; line-height: 1; margin-bottom: 10px; }
+.ih-lock-card h1 {
+  font-size: clamp(24px, 6vw, 32px); font-weight: 800; margin: 0 0 6px;
+  background: linear-gradient(135deg, #ff4d00, #ff9500);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+.ih-lock-sub { color: var(--text2); font-size: 15px; margin: 0 0 22px; line-height: 1.45; }
+#ih-lock-form { display: flex; flex-direction: column; gap: 10px; }
+#ih-lock-input {
+  width: 100%; padding: 14px 16px; font-size: 17px;
+  border-radius: var(--radius-sm); border: 1px solid var(--border2);
+  background: var(--bg3); color: var(--text); text-align: center;
+  letter-spacing: .04em;
+}
+#ih-lock-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+#ih-lock-go {
+  width: 100%; min-height: 50px; padding: 14px; font-size: 16px; font-weight: 700;
+  border: none; border-radius: var(--radius-sm); cursor: pointer; color: #fff;
+  background: linear-gradient(135deg, #ff4d00, #ff9500);
+}
+#ih-lock-go:active { transform: translateY(1px); }
+.ih-lock-secondary {
+  margin-top: 6px; padding: 12px 20px; min-height: 44px; font-size: 14px; font-weight: 600;
+  border-radius: var(--radius-sm); border: 1px solid var(--border2);
+  background: var(--bg3); color: var(--text2); cursor: pointer;
+}
+.ih-lock-err { color: var(--red); font-size: 14px; min-height: 20px; margin-top: 10px; }
+.ih-lock-hint { color: var(--text2); font-size: 13px; margin-top: 16px; line-height: 1.5; opacity: .85; }
+.ih-lock-warn {
+  margin-top: 18px; padding: 12px 14px; text-align: left;
+  border-radius: var(--radius-sm); font-size: 13px; line-height: 1.5;
+  background: var(--yellow-bg); color: var(--yellow); border: 1px solid var(--yellow);
+}
+.ih-lock-card.shake { animation: ih-shake .4s; }
+@keyframes ih-shake {
+  0%,100% { transform: translateX(0); }
+  20%,60% { transform: translateX(-7px); }
+  40%,80% { transform: translateX(7px); }
+}
+
+/* ─── ACCESS CODE MANAGER (instructors) ──────────────────────── */
+.ih-codes-row { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
+.ih-codes-row label { font-size: 13px; font-weight: 700; color: var(--text2); }
+.ih-codes-row input {
+  padding: 12px 14px; font-size: 15px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border2); background: var(--bg3); color: var(--text);
+}
+.ih-codes-row input:focus { outline: none; border-color: var(--accent); }
+.ih-code-out {
+  margin-top: 8px; padding: 12px; border-radius: var(--radius-sm);
+  background: var(--bg3); border: 1px solid var(--border2);
+  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px;
+  word-break: break-all; color: var(--teal); text-align: left; line-height: 1.6;
+}
+.ih-code-steps { font-size: 13px; color: var(--text2); line-height: 1.6; text-align: left; }
+.ih-code-steps li { margin-bottom: 6px; }
+
+.ih-code-select {
+  padding: 12px 14px; font-size: 15px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border2); background: var(--bg3); color: var(--text);
+  width: 100%;
+}
+.ih-code-rule { border: none; border-top: 1px solid var(--border); margin: 22px 0 14px; }
+.ih-code-out code, .ih-code-steps code {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  background: var(--bg3); padding: 1px 5px; border-radius: 4px; color: var(--teal);
+}
+
+/* ─── QR: ENLARGE FOR SCANNING ─── */
+.qr-code-wrap[role="button"] { cursor: zoom-in; }
+.qr-code-wrap[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.qr-enlarge { display: flex; align-items: center; gap: 8px; justify-content: center;
+              flex-wrap: wrap; margin-top: 10px; }
+.qr-enlarge-hint { font-size: 11px; color: var(--slate); }
+#qr-big { display: none; position: fixed; inset: 0; z-index: 4000; cursor: zoom-out;
+          background: #fff; align-items: center; justify-content: center; overflow: auto; }
+.qr-big-inner { display: flex; flex-direction: column; align-items: center; gap: 14px;
+                margin: auto; padding: 12px; }
+.qr-big-inner svg { display: block; height: auto; }
+.qr-big-hint { font-size: 13px; color: #555; font-family: inherit; }
