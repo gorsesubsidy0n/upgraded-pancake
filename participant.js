@@ -454,7 +454,17 @@
   function athleteUrl(payload, base) {
     const b = base || athleteBase();
     if (!b.url) return '';
-    return b.url + '#' + HASH_KEY + '=' + encodePayload(payload);
+    return b.url + '#' + HASH_KEY + '=' + encodePayload(payload) + linkTokenSuffix();
+  }
+
+  // The access gate ships a token that unlocks the athlete side straight
+  // from the link, so nobody types a code while the class waits. Absent
+  // when the gate isn't loaded, which keeps this file usable on its own.
+  function linkTokenSuffix() {
+    try {
+      const t = typeof ihLinkToken === 'function' ? ihLinkToken() : '';
+      return t ? '&k=' + t : '';
+    } catch (e) { return ''; }
   }
 
   // app.js declares `state` with const, so it is a global *lexical* binding and
@@ -480,6 +490,7 @@
   };
 
   let hostFormOpen = false;
+  let lastQrUrl = '';
 
   function hostFormHtml() {
     const saved = savedHost();
@@ -528,12 +539,35 @@
     loadPhoneOrigin(() => paintClassQR(payload));
   };
 
-  // Keep roughly 3.4px per module so the code stays comfortably scannable as
-  // the payload grows, clamped to what a laptop screen can actually show.
-  function qrPixelSize(url) {
+  // Phone cameras need a certain number of screen pixels *per module*, not a
+  // certain overall size. A long class makes a denser code, so the old fixed
+  // 520px cap squeezed clock-mode classes down to ~3.7px per module — right
+  // where scanning starts to fail, which reads as "the QR is broken" even
+  // though the link beside it is fine. Size up from the module count instead,
+  // and use whatever room the screen actually has.
+  const QR_PX_PER_MODULE = 5.5;
+
+  function qrModuleEstimate(url) {
     const bytes = url.length;
-    const modules = bytes > 1500 ? 149 : bytes > 1100 ? 133 : bytes > 700 ? 109 : bytes > 400 ? 85 : 65;
-    return Math.max(360, Math.min(520, Math.round((modules + 8) * 3.4 / 10) * 10));
+    return bytes > 1500 ? 149 : bytes > 1100 ? 133 : bytes > 700 ? 109 : bytes > 400 ? 85 : 65;
+  }
+
+  function qrPixelSize(url) {
+    // Sized purely by module count: the modal scrolls, so the code should not
+    // be squeezed to fit a short window. On a narrow screen the CSS max-width
+    // scales it down, and the enlarge view is there for when that isn't
+    // enough — which is the case a phone camera actually struggles with.
+    const want = (qrModuleEstimate(url) + 8) * QR_PX_PER_MODULE;
+    const room = window.innerWidth - 90;
+    return Math.round(Math.max(340, Math.min(want, Math.max(340, room))));
+  }
+
+  // Filling the screen with just the code is the reliable way to scan a long
+  // class from across a room, or off a TV. Sized to the screen rather than to
+  // the payload, and never smaller than the code already on show.
+  function qrFullSize(url) {
+    const room = Math.min(window.innerWidth * 0.94, window.innerHeight * 0.86);
+    return Math.round(Math.max(qrPixelSize(url), room, 340));
   }
 
   function paintClassQR(payload) {
@@ -565,7 +599,15 @@
     }
 
     const copy = MODE_COPY[payload.mode] || MODE_COPY.h;
-    const showLink = url && base.kind !== 'loopback';
+    // Always offer the link when there is one. Hiding it on localhost left
+    // the instructor with nothing at all to copy, which just reads as a
+    // broken panel — the address is still worth having, to test on this
+    // machine or to paste somewhere else.
+    const showLink = !!url;
+    const linkLabel = base.kind === 'loopback'
+      ? 'Link — works on this computer only:'
+      : 'Or send this link:';
+    lastQrUrl = url || '';
     body.innerHTML =
       '<div class="qr-head">' +
         '<div class="qr-title">' + copy.title + '</div>' +
@@ -574,10 +616,18 @@
             ? ' · 🎯 ' + payload.burner.items.length + '-move Core Burner' : '') +
         '</div>' +
       '</div>' +
-      '<div class="qr-code-wrap">' + svg + '</div>' +
+      '<div class="qr-code-wrap"' +
+        (url && base.kind !== 'loopback'
+          ? ' role="button" tabindex="0" title="Tap to enlarge" onclick="__ihBigQR()"' : '') +
+      '>' + svg + '</div>' +
+      (url && base.kind !== 'loopback'
+        ? '<div class="qr-enlarge"><button class="qr-btn tiny" onclick="__ihBigQR()">' +
+          '⛶ Make it bigger</button><span class="qr-enlarge-hint">Easier to scan from ' +
+          'across the room, or off a TV.</span></div>'
+        : '') +
       reachHtml(base) +
       (showLink
-        ? '<div class="qr-url-label">Or send this link:' +
+        ? '<div class="qr-url-label">' + linkLabel +
             '<button class="qr-btn tiny" onclick="__ihCopyLink()">Copy</button></div>' +
           '<div class="qr-url" id="qr-url">' + esc(url) + '</div>'
         : '') +
@@ -587,6 +637,24 @@
 
     modal.style.display = 'flex';
   }
+
+  // The code, as large as the screen allows and nothing else on it.
+  window.__ihBigQR = function () {
+    if (!lastQrUrl) return;
+    let el = document.getElementById('qr-big');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'qr-big';
+      el.addEventListener('click', () => { el.style.display = 'none'; });
+      document.body.appendChild(el);
+    }
+    let svg;
+    try { svg = QR.svg(lastQrUrl, { size: qrFullSize(lastQrUrl), level: 'L', margin: 4 }); }
+    catch (e) { return; }
+    el.innerHTML = '<div class="qr-big-inner">' + svg +
+      '<div class="qr-big-hint">Tap anywhere to close</div></div>';
+    el.style.display = 'flex';
+  };
 
   window.__ihToggleHostForm = function () {
     hostFormOpen = !hostFormOpen;
@@ -662,7 +730,12 @@
   // Put the athlete id in the link so reopening it — from history, a
   // bookmark, or a phone waking back up — lands on the same page.
   function writeUidToUrl(uid) {
-    const hash = '#' + HASH_KEY + '=' + rawPayload + '&' + UID_KEY + '=' + encodeURIComponent(uid);
+    // Keep the unlock token that came in with the link. Dropping it would
+    // lock this phone out the next time it reopened the page from history.
+    const k = /[#&?]k=([A-Za-z0-9]+)/.exec(location.href || '');
+    const hash = '#' + HASH_KEY + '=' + rawPayload +
+      (k ? '&k=' + k[1] : '') +
+      '&' + UID_KEY + '=' + encodeURIComponent(uid);
     try { history.replaceState(null, '', location.href.split('#')[0] + hash); }
     catch (e) { try { location.hash = hash.slice(1); } catch (e2) {} }
   }

@@ -71,6 +71,56 @@ save, restart.
 
 ---
 
+## Access codes
+
+The app asks for a code before it shows anything. There are two:
+
+| Code | Gets you |
+|---|---|
+| **Instructor** | The whole builder — generate, edit, run class, equipment, QR |
+| **Athlete** | Their own tracking page for a class they've scanned into, nothing else |
+
+It ships with **`coach2026`** and **`class2026`**. Change both before you
+rely on them — everyone reading this file knows them.
+
+An athlete who opens the bare site without scanning a QR code gets a
+"nothing to track yet" screen rather than your builder.
+
+**Most athletes never type anything.** The QR code carries an unlock
+token, so scanning it takes them straight to their tracking page. The
+athlete code is only needed by someone typing the address in by hand.
+Changing the athlete code invalidates the token in every link you've
+already handed out, which is usually what you want.
+
+### Changing a code
+
+1. Open the app as an instructor and tap **🔒 Access Codes**
+2. Choose which code, type the new one, tap **Generate the line**
+3. Paste the line it gives you over the matching line in `auth.js`
+4. Save and re-publish — commit and push, if you're on GitHub Pages
+
+The file stores a hash, never the code itself, so nobody can read your
+code out of the source. Changing a code signs everyone out, including
+you — write the new one down first.
+
+### What this is and isn't
+
+**It's a doorway, not a vault.**
+
+The app is a folder of files with no server behind it, so the code check
+has to run inside the visitor's own browser. Anyone who knows to open
+developer tools can read straight past it.
+
+It will keep out the public, the curious, and search engines. It will not
+stop someone who is genuinely trying. Don't put anything in this app
+you'd be upset to have read.
+
+If you ever need the real thing, it has to come from the host rather than
+the page — Netlify and Cloudflare Access both do proper password
+protection on static sites.
+
+---
+
 ## QR codes when phones aren't on studio wifi
 
 Guests without the wifi password, or a studio with no guest network, can
@@ -100,6 +150,14 @@ Nothing is stored anywhere but on the phone that scanned.
 the app later, re-upload the folder, or old codes will keep opening the
 old version.
 
+### If a code won't scan
+
+Longer classes make a denser code. Tap the QR image, or the **⛶ Make it
+bigger** button under it, for a full-screen version — that's the one to use
+if people are scanning from across the room or off a TV. There's also a
+plain link under the code you can text or paste into a group chat; it does
+exactly the same thing as scanning.
+
 ---
 
 ## What athletes do
@@ -109,6 +167,8 @@ Nothing to install, nothing to open.
 1. You generate a plan and tap **📱 Scan to Track**
 2. They point their camera at the code
 3. They type their name (or tap "Skip — just use this phone")
+
+They are not asked for an access code — the QR link lets them straight in.
 
 They get their own page for that class. Rounds, reps, and completed
 exercises are theirs alone — one person tapping does not affect anyone
@@ -194,6 +254,7 @@ back if you put a number in later.
 | `editor.js` | Plan editing |
 | `participant.js` | QR codes and the athlete phone pages |
 | `profiles.js` | Instructor profiles |
+| `auth.js` | The two access codes |
 | `qr.js` | QR code drawing |
 | `style.css` | Appearance |
 | `serve.js` | Optional local server (Option 2 above) |
@@ -202,6 +263,10 @@ back if you put a number in later.
 ---
 
 ## If something goes wrong
+
+**I've locked myself out** — nothing is lost. Open `auth.js` in a text
+editor and put a code you know back in, following the instructions at the
+top of that file. If the app is published, re-publish it afterwards.
 
 **Nothing happens when I double-click `index.html`** — right-click it,
 choose "Open with", and pick a browser.
