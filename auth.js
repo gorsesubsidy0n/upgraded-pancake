@@ -279,8 +279,8 @@ function ihNoClassScreen() {
   return '<div class="ih-lock-card">' +
     '<div class="ih-lock-icon">📱</div>' +
     '<h1>Nothing to track yet</h1>' +
-    '<p class="ih-lock-sub">You\'re signed in as an athlete. Scan the QR code ' +
-      'your instructor puts up when class starts and your workout appears here.</p>' +
+    '<p class="ih-lock-sub">You\'re signed in as an athlete. Open the class link ' +
+      'your instructor sends when class starts and your workout appears here.</p>' +
     '<button type="button" id="ih-lock-out" class="ih-lock-secondary">Sign out</button>' +
   '</div>';
 }

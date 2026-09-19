@@ -268,14 +268,14 @@
      ════════════════════════════════════════════════════════════════════ */
 
   const MODE_COPY = {
-    a: { title: '🔄 Scan to track your rounds', hint: 'Log every round, add partial reps, and watch the block clock.' },
-    h: { title: '💯 Scan for your rep counter', hint: 'Count reps as you knock them out — the clock runs on your phone.' },
-    p: { title: '🔺 Scan to track your climb', hint: 'Mark the rung you are on and count reps as you go.' },
-    l: { title: '📈 Scan to track your climb', hint: 'Mark the rung you are on and count reps as you go.' },
-    s: { title: '🛠️ Scan to track your reps', hint: 'Work at your own pace and log reps as you finish them.' },
-    c: { title: '🛠️ Scan for your class checklist', hint: 'Keep your place round by round, at your own pace.' },
-    b: { title: '🎯 Scan for the Core Burner', hint: 'See the finisher and tick each move as you go.' },
-    t: { title: '📲 Scan to follow along', hint: 'Your phone shows the same clock as the room.' },
+    a: { title: '🔄 Track your rounds', hint: 'Log every round, add partial reps, and watch the block clock.' },
+    h: { title: '💯 Your rep counter', hint: 'Count reps as you knock them out — the clock runs on your phone.' },
+    p: { title: '🔺 Track your climb', hint: 'Mark the rung you are on and count reps as you go.' },
+    l: { title: '📈 Track your climb', hint: 'Mark the rung you are on and count reps as you go.' },
+    s: { title: '🛠️ Track your reps', hint: 'Work at your own pace and log reps as you finish them.' },
+    c: { title: '🛠️ Your class checklist', hint: 'Keep your place round by round, at your own pace.' },
+    b: { title: '🎯 The Core Burner', hint: 'See the finisher and tick each move as you go.' },
+    t: { title: '📲 Follow along', hint: 'Your phone shows the same clock as the room.' },
   };
 
   const fmtMins = secs => {
@@ -490,7 +490,6 @@
   };
 
   let hostFormOpen = false;
-  let lastQrUrl = '';
 
   function hostFormHtml() {
     const saved = savedHost();
@@ -539,37 +538,6 @@
     loadPhoneOrigin(() => paintClassQR(payload));
   };
 
-  // Phone cameras need a certain number of screen pixels *per module*, not a
-  // certain overall size. A long class makes a denser code, so the old fixed
-  // 520px cap squeezed clock-mode classes down to ~3.7px per module — right
-  // where scanning starts to fail, which reads as "the QR is broken" even
-  // though the link beside it is fine. Size up from the module count instead,
-  // and use whatever room the screen actually has.
-  const QR_PX_PER_MODULE = 5.5;
-
-  function qrModuleEstimate(url) {
-    const bytes = url.length;
-    return bytes > 1500 ? 149 : bytes > 1100 ? 133 : bytes > 700 ? 109 : bytes > 400 ? 85 : 65;
-  }
-
-  function qrPixelSize(url) {
-    // Sized purely by module count: the modal scrolls, so the code should not
-    // be squeezed to fit a short window. On a narrow screen the CSS max-width
-    // scales it down, and the enlarge view is there for when that isn't
-    // enough — which is the case a phone camera actually struggles with.
-    const want = (qrModuleEstimate(url) + 8) * QR_PX_PER_MODULE;
-    const room = window.innerWidth - 90;
-    return Math.round(Math.max(340, Math.min(want, Math.max(340, room))));
-  }
-
-  // Filling the screen with just the code is the reliable way to scan a long
-  // class from across a room, or off a TV. Sized to the screen rather than to
-  // the payload, and never smaller than the code already on show.
-  function qrFullSize(url) {
-    const room = Math.min(window.innerWidth * 0.94, window.innerHeight * 0.86);
-    return Math.round(Math.max(qrPixelSize(url), room, 340));
-  }
-
   function paintClassQR(payload) {
     const base = athleteBase();
     const url = athleteUrl(payload, base);
@@ -577,37 +545,35 @@
     const body = document.getElementById('qr-modal-body');
     if (!modal || !body) return;
 
-    let svg;
+    // The link is the whole panel now. A QR code of a class plan runs to a
+    // few hundred modules, which is too fine for a phone camera to read off
+    // a laptop screen, so it was more trouble than it was worth.
+    let linkBlock;
     if (!url) {
-      svg = '<div class="qr-error">No address to point at yet.<br>Publish a copy below.</div>';
+      linkBlock = '<div class="qr-error">No address to share yet.<br>' +
+                  'Publish a copy below.</div>';
     } else if (base.kind === 'loopback') {
-      // Drawing a localhost code would only look like a broken scanner.
-      svg = '<div class="qr-error">No code yet — <b>localhost</b> is not an address<br>' +
-            'any other phone can open. See below.</div>';
+      linkBlock =
+        '<div class="qr-error"><b>localhost</b> is not an address another ' +
+        'phone can open.<br>Set up a published copy below, or start the app ' +
+        'with <code>node serve.js</code>.</div>' +
+        '<div class="qr-url-label">Works on this computer only:' +
+          '<button class="qr-btn tiny" onclick="__ihCopyLink()">Copy</button></div>' +
+        '<div class="qr-url" id="qr-url">' + esc(url) + '</div>';
     } else {
-      try {
-        // A class plan makes the payload much larger, which pushes the code
-        // to a higher version with far more (and therefore smaller) modules.
-        // Phone cameras need roughly 3-4px per module, so the code is grown
-        // to suit rather than left at a fixed size — it is shown on the
-        // instructor's laptop or TV, where there is room for it.
-        svg = QR.svg(url, { size: qrPixelSize(url), level: 'L', margin: 4 });
-      } catch (e) {
-        svg = '<div class="qr-error">This class is too long to fit in a QR code.<br>' +
-              'Share the link below instead.</div>';
-      }
+      linkBlock =
+        '<div class="qr-link-box">' +
+          '<div class="qr-link-label">Send this link to the class</div>' +
+          '<div class="qr-url" id="qr-url">' + esc(url) + '</div>' +
+          '<button class="qr-btn qr-copy-big" onclick="__ihCopyLink()">' +
+            '📋 Copy link</button>' +
+          '<div class="qr-link-hint">Paste it into your class group chat, or ' +
+            'text it to anyone who arrives late. It opens straight on their ' +
+            'phone — no code to type.</div>' +
+        '</div>';
     }
 
     const copy = MODE_COPY[payload.mode] || MODE_COPY.h;
-    // Always offer the link when there is one. Hiding it on localhost left
-    // the instructor with nothing at all to copy, which just reads as a
-    // broken panel — the address is still worth having, to test on this
-    // machine or to paste somewhere else.
-    const showLink = !!url;
-    const linkLabel = base.kind === 'loopback'
-      ? 'Link — works on this computer only:'
-      : 'Or send this link:';
-    lastQrUrl = url || '';
     body.innerHTML =
       '<div class="qr-head">' +
         '<div class="qr-title">' + copy.title + '</div>' +
@@ -616,45 +582,14 @@
             ? ' · 🎯 ' + payload.burner.items.length + '-move Core Burner' : '') +
         '</div>' +
       '</div>' +
-      '<div class="qr-code-wrap"' +
-        (url && base.kind !== 'loopback'
-          ? ' role="button" tabindex="0" title="Tap to enlarge" onclick="__ihBigQR()"' : '') +
-      '>' + svg + '</div>' +
-      (url && base.kind !== 'loopback'
-        ? '<div class="qr-enlarge"><button class="qr-btn tiny" onclick="__ihBigQR()">' +
-          '⛶ Make it bigger</button><span class="qr-enlarge-hint">Easier to scan from ' +
-          'across the room, or off a TV.</span></div>'
-        : '') +
+      linkBlock +
       reachHtml(base) +
-      (showLink
-        ? '<div class="qr-url-label">' + linkLabel +
-            '<button class="qr-btn tiny" onclick="__ihCopyLink()">Copy</button></div>' +
-          '<div class="qr-url" id="qr-url">' + esc(url) + '</div>'
-        : '') +
       '<div class="qr-hint">' + copy.hint + ' Each phone asks who is training, then keeps that ' +
         'athlete\'s own page — so two people can share a tablet, and a phone that goes blank ' +
         'reopens exactly where it was.</div>';
 
     modal.style.display = 'flex';
   }
-
-  // The code, as large as the screen allows and nothing else on it.
-  window.__ihBigQR = function () {
-    if (!lastQrUrl) return;
-    let el = document.getElementById('qr-big');
-    if (!el) {
-      el = document.createElement('div');
-      el.id = 'qr-big';
-      el.addEventListener('click', () => { el.style.display = 'none'; });
-      document.body.appendChild(el);
-    }
-    let svg;
-    try { svg = QR.svg(lastQrUrl, { size: qrFullSize(lastQrUrl), level: 'L', margin: 4 }); }
-    catch (e) { return; }
-    el.innerHTML = '<div class="qr-big-inner">' + svg +
-      '<div class="qr-big-hint">Tap anywhere to close</div></div>';
-    el.style.display = 'flex';
-  };
 
   window.__ihToggleHostForm = function () {
     hostFormOpen = !hostFormOpen;
@@ -687,10 +622,31 @@
     const el = document.getElementById('qr-url');
     if (!el) return;
     const text = el.textContent;
-    const done = () => { if (window.showToast) showToast('🔗 Link copied'); };
+    const ok = () => { if (window.showToast) showToast('🔗 Link copied'); };
+    // Selecting it means that even if both copy routes fail, the link is
+    // sitting highlighted and ready for Ctrl-C.
+    const select = () => {
+      try {
+        const r = document.createRange();
+        r.selectNodeContents(el);
+        const s = window.getSelection();
+        s.removeAllRanges();
+        s.addRange(r);
+      } catch (e) {}
+    };
+    // execCommand is the fallback that matters here: navigator.clipboard
+    // only exists in a secure context, and the app is often served over
+    // plain http on a studio LAN address, where it is simply absent.
+    const legacy = () => {
+      select();
+      let copied = false;
+      try { copied = document.execCommand('copy'); } catch (e) {}
+      if (copied) ok();
+      else if (window.showToast) showToast('Press Ctrl-C to copy the link');
+    };
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(done, () => {});
-    } else { done(); }
+      navigator.clipboard.writeText(text).then(ok, legacy);
+    } else { legacy(); }
   };
 
   window.closeClassQR = function () {

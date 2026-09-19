@@ -19,14 +19,14 @@ That's it. The app opens in your browser and everything works: building
 plans, editing them, going live with the timer, saved workouts, history,
 the exercise library.
 
-The one thing that will not work is **QR codes for athletes**, because a
-file sitting on your laptop has no address a phone can reach. If you want
-those, use Option 2 (and read the wifi section below).
+The one thing that will not work is **the class link for athletes**, because
+a file sitting on your laptop has no address a phone can reach. If you want
+that, use Option 2 (and read the wifi section below).
 
 ### Option 2 — Run the little server
 
-This is what you want if athletes will scan QR codes to track their own
-rounds and reps.
+This is what you want if athletes will open a link on their phones to track
+their own rounds and reps.
 
 1. Make sure Node is installed. Open a terminal and type:
 
@@ -77,17 +77,17 @@ The app asks for a code before it shows anything. There are two:
 
 | Code | Gets you |
 |---|---|
-| **Instructor** | The whole builder — generate, edit, run class, equipment, QR |
-| **Athlete** | Their own tracking page for a class they've scanned into, nothing else |
+| **Instructor** | The whole builder — generate, edit, save, run class, equipment |
+| **Athlete** | Their own tracking page for the class they were sent, nothing else |
 
 It ships with **`coach2026`** and **`class2026`**. Change both before you
 rely on them — everyone reading this file knows them.
 
-An athlete who opens the bare site without scanning a QR code gets a
+An athlete who opens the bare site without a class link gets a
 "nothing to track yet" screen rather than your builder.
 
-**Most athletes never type anything.** The QR code carries an unlock
-token, so scanning it takes them straight to their tracking page. The
+**Most athletes never type anything.** The class link carries an unlock
+token, so opening it takes them straight to their tracking page. The
 athlete code is only needed by someone typing the address in by hand.
 Changing the athlete code invalidates the token in every link you've
 already handed out, which is usually what you want.
@@ -146,10 +146,10 @@ protection on static sites.
 
 ---
 
-## QR codes when phones aren't on studio wifi
+## Sharing when phones aren't on studio wifi
 
 Guests without the wifi password, or a studio with no guest network, can
-still scan — but this needs a one-time setup.
+still join — but this needs a one-time setup.
 
 1. Upload this folder to any free static host. Good options:
    - **Netlify Drop** (`app.netlify.com/drop`) — drag the folder onto the
@@ -159,11 +159,11 @@ still scan — but this needs a one-time setup.
 
 2. Copy the address it gives you.
 
-3. In the app, generate a plan, tap **📱 Scan to Track**, then tap
+3. In the app, generate a plan, tap **🔗 Share Link**, then tap
    **Set up** and paste the address.
 
-From then on every QR code points there, and phones open the class on
-their own mobile data. The banner in the QR panel turns green and reads
+From then on every class link points there, and phones open the class on
+their own mobile data. The banner in the share panel turns green and reads
 "Works anywhere".
 
 **Is this private?** Yes. The class details travel in the part of the link
@@ -175,13 +175,15 @@ Nothing is stored anywhere but on the phone that scanned.
 the app later, re-upload the folder, or old codes will keep opening the
 old version.
 
-### If a code won't scan
+### Getting the link to people
 
-Longer classes make a denser code. Tap the QR image, or the **⛶ Make it
-bigger** button under it, for a full-screen version — that's the one to use
-if people are scanning from across the room or off a TV. There's also a
-plain link under the code you can text or paste into a group chat; it does
-exactly the same thing as scanning.
+The share panel shows the class link with a **📋 Copy link** button. Copy it
+and paste it into your group chat, a text, or whatever the class already
+uses. Everyone who opens it lands on their own tracking page.
+
+If the copy button can't reach the clipboard — some browsers only allow it
+on https addresses — the link is selected for you and you can press
+Ctrl-C (Cmd-C on a Mac) instead.
 
 ---
 
@@ -189,11 +191,11 @@ exactly the same thing as scanning.
 
 Nothing to install, nothing to open.
 
-1. You generate a plan and tap **📱 Scan to Track**
-2. They point their camera at the code
-3. They type their name (or tap "Skip — just use this phone")
+1. You generate a plan and tap **🔗 Share Link**
+2. You copy the link and send it to the class
+3. They open it and type their name (or tap "Skip — just use this phone")
 
-They are not asked for an access code — the QR link lets them straight in.
+They are not asked for an access code — the class link lets them straight in.
 
 They get their own page for that class. Rounds, reps, and completed
 exercises are theirs alone — one person tapping does not affect anyone
@@ -218,7 +220,7 @@ the front: the current interval, whether it's work or rest, the move they're
 on, what's coming next, and how much of the class is left. During a rest it
 shows the move they're about to start, so nobody is caught out.
 
-There is no server involved. The QR link carries the whole class schedule
+There is no server involved. The class link carries the whole class schedule
 plus the moment the class started, and each phone works out its own position
 from that. Phones stay in step because they're all reading the same plan.
 
@@ -246,6 +248,36 @@ athlete's phone. Pyramids mirror back down automatically if you type one
 that way; the app doesn't force symmetry.
 
 Changing style resets the climb to that style's default.
+
+---
+
+## Saving a class and teaching it again
+
+Built something that worked? Keep it.
+
+On the plan screen tap **💾 Save Class**, give it a name you'll recognise
+later — "Tuesday 6am Full Body", "the one everyone hated" — and save. The
+name is suggested for you from the day and style, so you can just hit save.
+
+To bring it back, tap **📋 History** on the front screen. Saved classes are
+on the first tab, each showing its style, focus, length, and how many
+people it was built for. Each one gives you:
+
+| Button | What it does |
+|---|---|
+| **📺 Go Live** | Straight into the running class, timer started |
+| **✏️ Open** | Opens it on the plan screen so you can tweak it first |
+| **✕** | Deletes it (it asks first) |
+
+Loading a class restores the whole setup — style, length, class size,
+difficulty, equipment, warm-up and cool-down — not just the exercise list.
+So if you hit **🔄 Regenerate** afterwards you get a fresh class built to
+the same brief, rather than something shaped by whatever was on screen
+before.
+
+The last **20** classes are kept, newest first. They live in this browser
+on this laptop, so they won't follow you to another machine, and clearing
+your browsing data clears them.
 
 ---
 
@@ -277,10 +309,9 @@ back if you put a number in later.
 | `programming.js` | Class styles and rep schemes |
 | `mixed_ability.js` | Beginner / Intermediate / Advanced handling |
 | `editor.js` | Plan editing |
-| `participant.js` | QR codes and the athlete phone pages |
+| `participant.js` | The class share link and the athlete phone pages |
 | `profiles.js` | Instructor profiles |
 | `auth.js` | The two access codes |
-| `qr.js` | QR code drawing |
 | `style.css` | Appearance |
 | `serve.js` | Optional local server (Option 2 above) |
 | `serve.config.json` | Saved server settings |
@@ -304,15 +335,13 @@ terminal.
 network from the laptop, or the studio wifi blocks devices from seeing each
 other. Use the published-copy setup above instead.
 
-**The QR code won't scan** — check the banner under the code. If it says
-"Phones cannot reach this · localhost", the app was opened at
+**Phones can't open the class link** — check the banner in the share panel.
+If it says "Phones cannot reach this · localhost", the app was opened at
 `http://localhost:…`, which every phone reads as *itself*. Close that tab
 and use the **"On phones (same wifi)"** address the server printed instead
 (something like `http://192.168.1.50:8080`), or publish a copy as above.
-Otherwise, try turning up screen brightness and tilting the laptop to kill
-glare — the code is dense, so reflections can defeat a camera.
 
-**A QR code says the class link looks damaged** — the published copy is
+**A phone says the class link looks damaged** — the published copy is
 older than the app you're building with. Re-upload the folder.
 
 **I want my equipment numbers back** — ⚙️ Equipment → **↺ Reset**.

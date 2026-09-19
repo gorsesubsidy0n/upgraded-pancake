@@ -287,8 +287,9 @@ if (typeof ihMountGate !== 'function') {
 <div class="exercises-container" id="plan-exercises"></div>
 <div class="editor-actions">
 <button class="action-btn secondary" onclick="generateWorkout()">🔄 Regenerate</button>
+<button class="action-btn secondary" onclick="openSaveClassModal()">💾 Save Class</button>
 <button class="action-btn secondary" onclick="exportPDF()">📄 PDF</button>
-<button class="action-btn secondary" id="qr-plan-btn" onclick="showClassQR()" style="display:none">📱 Scan to Track</button>
+<button class="action-btn secondary" id="qr-plan-btn" onclick="showClassQR()" style="display:none">🔗 Share Link</button>
 <button class="action-btn instructor-btn" onclick="openInstructorView()">🎓 Instructor View</button>
 <button class="action-btn go-live-btn" onclick="goLive()">📺 Go Live →</button>
 </div>
@@ -301,7 +302,7 @@ if (typeof ihMountGate !== 'function') {
 <button class="back-btn" onclick="goToPlanEditor()">← Plan</button>
 <h2 id="timer-style-name"></h2>
 <div class="timer-header-right">
-<button class="icon-btn" id="qr-share-btn" onclick="showClassQR()" style="display:none">📱 Scan to Track</button>
+<button class="icon-btn" id="qr-share-btn" onclick="showClassQR()" style="display:none">🔗 Share Link</button>
 <button class="icon-btn" onclick="switchToParticipant()">📺 Class View</button>
 <button class="back-btn danger" onclick="goBack()">✕ Exit</button>
 </div>
@@ -351,7 +352,7 @@ if (typeof ihMountGate !== 'function') {
 <div class="p-header">
 <span class="p-title" id="p-title-label">⚡ LIVE CLASS</span>
 <div class="p-header-actions">
-<button class="p-back-btn" id="qr-live-btn" onclick="showClassQR()" style="display:none">📱 Scan to Track</button>
+<button class="p-back-btn" id="qr-live-btn" onclick="showClassQR()" style="display:none">🔗 Share Link</button>
 <button class="p-back-btn p-instructor-btn" onclick="switchToInstructor()">🎓</button>
 </div>
 </div>
@@ -625,7 +626,7 @@ if (typeof ihMountGate !== 'function') {
 </div>
 
 <!-- ══════════════════════════════════════════════
-     SCAN-TO-TRACK: QR modal (instructor) + athlete screen
+     SHARE LINK: class link modal (instructor) + athlete screen
 ══════════════════════════════════════════════ -->
 <div class="qr-modal" id="qr-modal" style="display:none" onclick="if(event.target===this)closeClassQR()">
 <div class="qr-modal-inner">
@@ -633,12 +634,25 @@ if (typeof ihMountGate !== 'function') {
 <div id="qr-modal-body"></div>
 </div>
 </div>
+<!-- Naming a saved class, so it is recognisable in the list weeks later. -->
+<div class="qr-modal" id="save-class-modal" style="display:none" onclick="if(event.target===this)closeSaveClassModal()">
+<div class="qr-modal-inner save-class-inner">
+<button class="modal-close qr-close" onclick="closeSaveClassModal()">✕</button>
+<div class="qr-title">💾 Save this class</div>
+<div class="qr-sub" id="save-class-sub"></div>
+<form id="save-class-form" autocomplete="off">
+<label class="save-class-label" for="save-class-name">Name it</label>
+<input class="save-class-input" id="save-class-name" maxlength="60" placeholder="e.g. Tuesday 6am Full Body" spellcheck="false" type="text"/>
+<div class="save-class-hint">Give it a name you'll recognise later — the day, the time, or what it felt like.</div>
+<button class="action-btn go-live-btn save-class-go" type="submit">Save class</button>
+</form>
+</div>
+</div>
 </div>
 <!-- /#app -->
 <div class="screen" id="athlete-screen"><div id="athlete-root"></div></div>
 <script src="exercise-db.js"></script>
 <script src="muscle-map.js"></script>
-<script src="qr.js"></script>
 <script src="app.js"></script>
 <script src="programming.js"></script>
 <script src="editor.js"></script>

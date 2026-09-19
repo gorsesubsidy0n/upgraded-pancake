@@ -1389,15 +1389,21 @@ body {
 .qr-close { position: absolute; top: 12px; right: 12px; }
 .qr-title { font-size: 19px; font-weight: 800; margin-bottom: 4px; }
 .qr-sub { font-size: 13px; color: var(--slate); margin-bottom: 16px; }
-.qr-code-wrap { background: #fff; padding: 12px; border-radius: var(--radius-sm);
-                display: inline-block; line-height: 0; }
-/* The code sizes itself to its payload (see qrPixelSize), so the width set
-   on the element is honoured rather than overridden by a fixed one. */
-.qr-code-wrap svg { display: block; max-width: 78vw; max-height: 78vh; height: auto; }
 .qr-url-label { font-size: 12px; color: var(--slate); margin: 16px 0 4px; }
 .qr-url { font-size: 11px; font-family: ui-monospace, Menlo, Consolas, monospace; word-break: break-all;
           background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-xs);
           padding: 8px; color: var(--teal); max-height: 92px; overflow-y: auto; }
+
+/* The link is the way a class joins, so it gets the weight the QR code
+   used to have rather than sitting underneath it as an afterthought. */
+.qr-link-box { background: var(--bg3); border: 1px solid var(--border);
+               border-radius: var(--radius-sm); padding: 16px; margin: 4px 0 2px;
+               text-align: left; }
+.qr-link-label { font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
+                 color: var(--text2); margin-bottom: 8px; }
+.qr-link-box .qr-url { user-select: all; cursor: text; max-height: 120px; }
+.qr-copy-big { width: 100%; margin-top: 12px; font-size: 15px; padding: 12px; }
+.qr-link-hint { font-size: 12px; line-height: 1.5; color: var(--text2); margin-top: 10px; }
 .qr-hint { font-size: 11.5px; color: var(--slate); margin-top: 14px; line-height: 1.45; }
 .qr-warn { font-size: 12px; line-height: 1.5; color: var(--yellow); background: var(--yellow-bg);
            border-radius: var(--radius-sm); padding: 10px 12px; margin-top: 14px; text-align: left; }
@@ -1982,19 +1988,6 @@ html.ih-locked, html.ih-locked body { overflow: hidden; }
   background: var(--bg3); padding: 1px 5px; border-radius: 4px; color: var(--teal);
 }
 
-/* ─── QR: ENLARGE FOR SCANNING ─── */
-.qr-code-wrap[role="button"] { cursor: zoom-in; }
-.qr-code-wrap[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.qr-enlarge { display: flex; align-items: center; gap: 8px; justify-content: center;
-              flex-wrap: wrap; margin-top: 10px; }
-.qr-enlarge-hint { font-size: 11px; color: var(--slate); }
-#qr-big { display: none; position: fixed; inset: 0; z-index: 4000; cursor: zoom-out;
-          background: #fff; align-items: center; justify-content: center; overflow: auto; }
-.qr-big-inner { display: flex; flex-direction: column; align-items: center; gap: 14px;
-                margin: auto; padding: 12px; }
-.qr-big-inner svg { display: block; height: auto; }
-.qr-big-hint { font-size: 13px; color: #555; font-family: inherit; }
-
 /* ─── BOOT FAILURE (auth.js did not finish) ─────────────────── */
 /* Shown only by the safety net in index.html. It sits outside #app, so
    it is still visible while html.ih-locked hides everything else. */
@@ -2048,3 +2041,22 @@ html.ih-locked, html.ih-locked body { overflow: hidden; }
   margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);
   font-size: 12.5px; line-height: 1.5; color: var(--text2);
 }
+/* ─── SAVE A CLASS ──────────────────────────────────────────── */
+.save-class-inner { text-align: left; max-width: 380px; }
+.save-class-label { display: block; font-size: 12px; text-transform: uppercase;
+                    letter-spacing: .06em; color: var(--text2); margin: 14px 0 6px; }
+.save-class-input { width: 100%; padding: 12px 14px; font-size: 15px;
+                    background: var(--bg); color: var(--text);
+                    border: 1px solid var(--border2); border-radius: var(--radius-sm); }
+.save-class-input:focus { outline: none; border-color: var(--accent);
+                          box-shadow: 0 0 0 3px var(--accent-glow); }
+.save-class-hint { font-size: 12px; line-height: 1.5; color: var(--text2); margin-top: 8px; }
+.save-class-go { width: 100%; margin-top: 16px; }
+
+/* Saved class cards carry enough detail to pick one out weeks later. */
+.saved-name { font-size: 16px; font-weight: 700; color: var(--text); margin: 2px 0 6px; }
+.saved-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.saved-actions .small-btn { flex: 1 1 auto; min-height: 38px; }
+.saved-actions .small-btn.go { background: var(--green-bg); color: var(--green);
+                               border-color: var(--green); font-weight: 700; flex: 2 1 auto; }
+.saved-actions .small-btn.danger { flex: 0 0 44px; }
