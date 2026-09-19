@@ -34,7 +34,7 @@ const AUTH = {
 
   // ── PASTE NEW CODE LINES BELOW THIS LINE ──
   instructor: 'cb53467ec05776c1b9e57f9626ff861bc34522f9fc13afdde0793738589832fc',
-  athlete:    '5f8e0a23216072c8b417dc7b98b6f6a13fd5b0b338519fd1cd59a3bf3c645d53',,
+  athlete:    '5f8e0a23216072c8b417dc7b98b6f6a13fd5b0b338519fd1cd59a3bf3c645d53',
   // ── PASTE NEW CODE LINES ABOVE THIS LINE ──
 };
 
