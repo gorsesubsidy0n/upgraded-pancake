@@ -38,14 +38,30 @@ const AUTH = {
   // ── PASTE NEW CODE LINES ABOVE THIS LINE ──
 };
 
-// Hashes of the codes this app shipped with. Used only to nag you into
-// changing them — if these still match, the codes are public knowledge.
-const AUTH_SHIPPED = {
-  instructor: 'e2a80b930b539702b03a32b99acd68f340fbffbc81a46b4a8155dd0b251f9e34',
-  athlete:    'c0b1a2b3208aef1fa772c83a201cc83e75878e9301d005979ba507c066b8b3cc',
-};
+// ── DO NOT EDIT THE NEXT LINE ─────────────────────────────────
+// Fingerprints of the codes this app was published with. They exist only
+// so the app can warn you while the codes are still public knowledge.
+//
+// Written on one line, with short key names, entirely on purpose: the
+// lines above are `instructor:` and `athlete:`, and if these said the
+// same thing then replacing a code line — or a find-and-replace on the
+// old hash — would quietly rewrite these too. The warning would then
+// switch itself off at the exact moment it was telling the truth.
+const AUTH_SHIPPED = Object.freeze({ i: 'e2a80b930b539702b03a32b99acd68f340fbffbc81a46b4a8155dd0b251f9e34', a: 'c0b1a2b3208aef1fa772c83a201cc83e75878e9301d005979ba507c066b8b3cc' });
 
 const AUTH_KEY = 'ih_auth';
+
+// A pasted line that lost a character leaves a hash nothing can ever
+// match, which shows up as "my new code doesn't work". A line that lost
+// its value entirely would be worse: an empty hash could match an empty
+// stored value and let everyone in. Check the shape once, up front.
+const IH_HEX64 = /^[0-9a-f]{64}$/;
+
+function ihCodesValid() {
+  return IH_HEX64.test(AUTH.instructor || '')
+      && IH_HEX64.test(AUTH.athlete || '')
+      && AUTH.instructor !== AUTH.athlete;
+}
 
 // ─── HASHING ──────────────────────────────────────────────────
 // A self-contained SHA-256 rather than crypto.subtle, which only exists
@@ -138,7 +154,7 @@ function ihStoredHash() {
 }
 
 function ihRoleFor(hash) {
-  if (!hash) return null;
+  if (!hash || !ihCodesValid()) return null;
   if (hash === AUTH.instructor) return 'instructor';
   if (hash === AUTH.athlete) return 'athlete';
   return null;
@@ -153,8 +169,8 @@ function ihRole() {
 function ihIsInstructor() { return ihRole() === 'instructor'; }
 
 function ihUsingShippedCodes() {
-  return AUTH.instructor === AUTH_SHIPPED.instructor
-      || AUTH.athlete === AUTH_SHIPPED.athlete;
+  return AUTH.instructor === AUTH_SHIPPED.i
+      || AUTH.athlete === AUTH_SHIPPED.a;
 }
 
 function ihSignIn(code) {
@@ -202,9 +218,19 @@ function ihTryLinkToken() {
 if (!ihRole()) ihTryLinkToken();
 
 // ─── THE GATE ─────────────────────────────────────────────────
-// Hide the app before it can paint. Done against <html> because this
-// script runs in <head>, before <body> exists.
-if (!ihRole()) document.documentElement.classList.add('ih-locked');
+// The page ships with class="ih-locked" already on <html>, so the app is
+// hidden before a single line of script runs. This file's job is to take
+// that class *off* once someone has proved who they are.
+//
+// It is deliberately this way round. If this file ever fails to load or
+// throws — a bad paste into AUTH is the likely cause — nothing removes
+// the class, so the app stays shut. The old arrangement added the class
+// here instead, which meant a syntax error silently unlocked everything.
+if (ihRole()) {
+  document.documentElement.classList.remove('ih-locked');
+} else {
+  document.documentElement.classList.add('ih-locked');
+}
 
 // An athlete who opens the bare site — no class code in the link — has
 // nothing to look at, so send them somewhere that says so kindly rather
@@ -215,6 +241,22 @@ function ihAthleteWithoutClass() {
 
 function ihLockScreen() {
   const shipped = ihUsingShippedCodes();
+  const broken = !ihCodesValid();
+  // Without this, a mangled paste rejects every code with "that code
+  // isn't right" — which sends you hunting for the wrong problem.
+  if (broken) {
+    return '<div class="ih-lock-card">' +
+      '<div class="ih-lock-icon">⚠</div>' +
+      '<h1>Access codes are damaged</h1>' +
+      '<p class="ih-lock-sub">No code can work until this is fixed, so the ' +
+        'app is staying shut.</p>' +
+      '<div class="ih-lock-warn">One of the two lines between the PASTE ' +
+        'markers in <code>auth.js</code> is not a valid code line. Each must ' +
+        'be 64 characters of <code>0-9</code> and <code>a-f</code>, and the ' +
+        'two must differ.<br><br>Re-copy the line from the Access Codes ' +
+        'panel, paste it over the whole old line, and re-publish.</div>' +
+    '</div>';
+  }
   return '<div class="ih-lock-card">' +
     '<div class="ih-lock-icon">⚡</div>' +
     '<h1>Inspire Habits</h1>' +
@@ -303,6 +345,16 @@ if (document.readyState === 'loading') {
 // re-published — otherwise it would only ever apply to this one phone
 // and every athlete would still be on the old one. This panel does the
 // hashing and hands over a line to paste.
+function ihLiveCodeRow(label, hash, shippedHash) {
+  const valid = IH_HEX64.test(hash || '');
+  const state = !valid ? '<b class="ih-code-bad">damaged</b>'
+    : hash === shippedHash ? '<b class="ih-code-bad">still the shipped one</b>'
+    : '<b class="ih-code-ok">changed</b>';
+  const id = valid ? hash.slice(0, 8) : '—';
+  return '<div class="ih-code-live-row"><span>' + label + '</span>' +
+    '<span>' + state + ' <code>' + id + '…</code></span></div>';
+}
+
 function showAccessCodes() {
   if (!ihIsInstructor()) return;
   const modal = document.getElementById('qr-modal');
@@ -318,6 +370,18 @@ function showAccessCodes() {
       ? '<div class="ih-lock-warn">⚠ You\'re still using the codes this app ' +
         'shipped with. Change both before you rely on them.</div>'
       : '') +
+    // If a change doesn't seem to "take", it is nearly always the browser
+    // still running a cached copy of the old auth.js. Showing what is
+    // actually loaded turns that into something you can see.
+    '<div class="ih-code-live">' +
+      '<div class="ih-code-live-title">Currently loaded from <code>auth.js</code></div>' +
+      ihLiveCodeRow('Instructor', AUTH.instructor, AUTH_SHIPPED.i) +
+      ihLiveCodeRow('Athlete', AUTH.athlete, AUTH_SHIPPED.a) +
+      '<div class="ih-code-live-hint">Changed a code and still see “shipped” ' +
+        'here? The browser is showing you a cached copy. Hard-refresh with ' +
+        '<b>Ctrl-Shift-R</b> (<b>Cmd-Shift-R</b> on a Mac). On GitHub Pages ' +
+        'also give the deploy a minute to finish.</div>' +
+    '</div>' +
     '<div class="ih-codes-row">' +
       '<label for="ih-new-role">Which code</label>' +
       '<select id="ih-new-role" class="ih-code-select">' +

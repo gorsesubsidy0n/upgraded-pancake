@@ -1,12 +1,38 @@
 <!DOCTYPE html>
 
-<html lang="en">
+<!-- ih-locked starts ON. auth.js removes it once someone signs in, so a
+     broken or missing auth.js leaves the app shut rather than wide open. -->
+<html class="ih-locked" lang="en">
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
 <title>Inspire Habits</title>
 <link href="style.css" rel="stylesheet"/>
 <script src="auth.js"></script>
+<script>
+// Safety net. If auth.js did not finish — a stray quote in a pasted code
+// line is the usual reason — every function below it is missing and the
+// gate never mounts. Say so plainly instead of leaving a blank page.
+if (typeof ihMountGate !== 'function') {
+  document.addEventListener('DOMContentLoaded', function () {
+    var d = document.createElement('div');
+    d.id = 'ih-boot-fail';
+    d.innerHTML =
+      '<div class="ih-boot-fail-card">' +
+      '<h1>\u26a0 Inspire Habits could not start</h1>' +
+      '<p><code>auth.js</code> stopped partway through, so the access ' +
+      'gate never loaded. The app is being kept shut rather than left ' +
+      'unlocked.</p>' +
+      '<p>This almost always means a pasted access-code line is broken — ' +
+      'a missing quote or comma. Open <code>auth.js</code>, check the two ' +
+      'lines between the PASTE markers, then re-publish.</p>' +
+      '<p class="ih-boot-fail-hint">The exact error is in the browser ' +
+      'console (F12 \u2192 Console).</p>' +
+      '</div>';
+    document.body.appendChild(d);
+  });
+}
+</script>
 </head>
 <body>
 <div id="app">

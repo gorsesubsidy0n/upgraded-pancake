@@ -98,10 +98,35 @@ already handed out, which is usually what you want.
 2. Choose which code, type the new one, tap **Generate the line**
 3. Paste the line it gives you over the matching line in `auth.js`
 4. Save and re-publish — commit and push, if you're on GitHub Pages
+5. Hard-refresh the page (**Ctrl-Shift-R**, or **Cmd-Shift-R** on a Mac)
 
 The file stores a hash, never the code itself, so nobody can read your
 code out of the source. Changing a code signs everyone out, including
 you — write the new one down first.
+
+**Replace the whole line, and only that line.** Don't find-and-replace
+the old hash across the file: the same value appears further down in
+`AUTH_SHIPPED`, which is the app's record of what it was published with.
+Overwriting that makes the "still using the shipped codes" warning stick
+on forever even though your change worked.
+
+The Access Codes panel shows which codes are actually loaded right now,
+each marked **changed** or **still the shipped one**. If you've edited
+`auth.js` and it still says *shipped*, the browser is serving a cached
+copy — hard-refresh, and on GitHub Pages give the deploy a minute.
+
+### If a code stops working
+
+The app is built to fail shut. If `auth.js` is damaged the app won't open
+at all, rather than opening for everyone:
+
+- **"Access codes are damaged"** — one of the two lines between the PASTE
+  markers isn't a valid code line. Each must be 64 characters of `0-9`
+  and `a-f`, and the two must be different. Re-copy from the panel and
+  paste over the whole line.
+- **"Inspire Habits could not start"** — `auth.js` has a syntax error,
+  usually a missing quote or comma from a paste. The browser console
+  (**F12 → Console**) names the line.
 
 ### What this is and isn't
 
