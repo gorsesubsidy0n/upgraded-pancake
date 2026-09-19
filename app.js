@@ -1561,11 +1561,54 @@ function editPlanExercise(idx){const ex=state.workout.exercises[idx];state.modal
 function editWarmCoolExercise(type,idx){const ex=type==='warmup'?state.workout.warmup[idx]:state.workout.cooldown[idx];state.modal.editTarget=type==='warmup'?'plan-warmup':'plan-cooldown';state.modal.editIndex=idx;state.modal.category=type;openExerciseModal(type,ex);}
 
 // ─── SAVE / EXPORT ────────────────────────────────────────────
-function saveWorkout(){
+function defaultClassName(){
+  if(!state.workout)return 'Class';
+  const cfg=state.workout.styleCfg||{};
+  const focus=(MUSCLE_FOCUS[state.muscle]&&MUSCLE_FOCUS[state.muscle].label)||state.muscle||'';
+  const day=new Date().toLocaleDateString(undefined,{weekday:'long'});
+  return day+' '+(cfg.name||'Class')+(focus?' — '+focus:'');
+}
+function openSaveClassModal(){
+  if(!state.workout){showToast('Build a class first');return;}
+  const modal=document.getElementById('save-class-modal');
+  const input=document.getElementById('save-class-name');
+  const sub=document.getElementById('save-class-sub');
+  if(!modal||!input)return;
+  const cfg=state.workout.styleCfg||{};
+  if(sub)sub.textContent=(cfg.icon?cfg.icon+' ':'')+(cfg.name||'Class')+' · '+
+    state.workout.duration+' min · '+state.workout.exercises.length+' exercises';
+  input.value=defaultClassName();
+  modal.style.display='flex';
+  // Pre-selected so a new name simply replaces the suggestion.
+  setTimeout(()=>{input.focus();input.select();},30);
+}
+function closeSaveClassModal(){
+  const modal=document.getElementById('save-class-modal');
+  if(modal)modal.style.display='none';
+}
+function saveWorkout(name){
   if(!state.workout)return;
-  const saved={id:Date.now(),name:state.workout.styleCfg.name+' — '+(MUSCLE_FOCUS[state.muscle]?.label||state.muscle),date:new Date().toLocaleDateString(),workout:state.workout,participants:state.workout.participants,duration:state.workout.duration,muscle:state.muscle,style:state.workout.style};
+  const clean=(name||'').trim()||defaultClassName();
+  const saved={
+    id:Date.now(),
+    name:clean,
+    date:new Date().toLocaleDateString(),
+    workout:state.workout,
+    participants:state.workout.participants,
+    duration:state.workout.duration,
+    muscle:state.muscle,
+    style:state.workout.style,
+    // Kept so loading restores the setup exactly, not just the exercises.
+    difficulty:state.difficulty,
+    props:Array.isArray(state.props)?state.props.slice():state.props,
+    includeWarmup:state.includeWarmup,
+    includeCooldown:state.includeCooldown,
+    warmupDuration:state.warmupDuration,
+    ygigWorkSec:state.ygigWorkSec
+  };
   state.savedWorkouts.unshift(saved);if(state.savedWorkouts.length>20)state.savedWorkouts.pop();
-  saveToStorage();showToast('✅ Workout saved!','success');
+  saveToStorage();showToast('✅ Saved “'+clean+'”','success');
+  return saved;
 }
 function exportPDF(){
   if(!state.workout)return;
@@ -1641,12 +1684,64 @@ function showHistory(){
     hc.appendChild(d);
   });
   const sc=document.getElementById('saved-list');sc.innerHTML='';
-  if(!state.savedWorkouts.length)sc.innerHTML='<div class="empty-state">No saved workouts yet.</div>';
-  else state.savedWorkouts.forEach(sw=>{const d=document.createElement('div');d.className='history-card saved-card';d.innerHTML='<div class="history-date">'+sw.date+'</div><div class="history-info"><span class="history-style">'+sw.name+'</span></div><div class="history-meta">'+sw.duration+' min · '+sw.participants+' people</div><div class="saved-actions"><button class="small-btn" onclick="loadSavedWorkout('+sw.id+')">▶ Load</button><button class="small-btn danger" onclick="deleteSavedWorkout('+sw.id+')">✕</button></div>';sc.appendChild(d);});
+  if(!state.savedWorkouts.length)sc.innerHTML='<div class="empty-state">No saved classes yet.<br>Build a class, then tap 💾 Save Class on the plan screen.</div>';
+  else state.savedWorkouts.forEach(sw=>{
+    const d=document.createElement('div');d.className='history-card saved-card';
+    const cfg=(sw.workout&&sw.workout.styleCfg)||{};
+    const icon=cfg.icon||'🏋️';
+    const styleName=cfg.name||sw.style||'Class';
+    const focus=(MUSCLE_FOCUS[sw.muscle]&&MUSCLE_FOCUS[sw.muscle].label)||sw.muscle||'';
+    const exCount=(sw.workout&&sw.workout.exercises)?sw.workout.exercises.length:0;
+    const burner=(sw.workout&&sw.workout.coreBurner&&sw.workout.coreBurner.exercises&&sw.workout.coreBurner.exercises.length)
+      ?' · 🎯 Core Burner':'';
+    d.innerHTML='<div class="history-date">Saved '+escapeHtml(sw.date)+'</div>'+
+      '<div class="saved-name">'+escapeHtml(sw.name)+'</div>'+
+      '<div class="history-info"><span class="history-style">'+icon+' '+escapeHtml(styleName)+'</span>'+
+        (focus?'<span class="history-muscle">'+escapeHtml(focus)+'</span>':'')+'</div>'+
+      '<div class="history-meta">'+sw.duration+' min · '+sw.participants+' people · '+exCount+' exercises'+burner+'</div>'+
+      '<div class="saved-actions">'+
+        '<button class="small-btn go" onclick="goLiveSavedWorkout('+sw.id+')">📺 Go Live</button>'+
+        '<button class="small-btn" onclick="loadSavedWorkout('+sw.id+')">✏️ Open</button>'+
+        '<button class="small-btn danger" onclick="deleteSavedWorkout('+sw.id+')">✕</button>'+
+      '</div>';
+    sc.appendChild(d);
+  });
   showScreen('history-screen');
 }
-function loadSavedWorkout(id){const sw=state.savedWorkouts.find(s=>s.id===id);if(!sw)return;state.workout=sw.workout;state.muscle=sw.muscle;renderPlanEditor();showScreen('plan-editor-screen');}
-function deleteSavedWorkout(id){state.savedWorkouts=state.savedWorkouts.filter(s=>s.id!==id);saveToStorage();showHistory();}
+// Putting the saved settings back, not just the exercises. Without this a
+// loaded class kept whatever was last on the setup screen, so Regenerate
+// would quietly build something else and the plan header read wrong.
+function applySavedWorkout(sw){
+  const w=sw.workout;
+  state.workout=w;
+  state.muscle=sw.muscle!=null?sw.muscle:(w?w.muscle:state.muscle);
+  state.style=sw.style!=null?sw.style:(w?w.style:state.style);
+  state.duration=sw.duration!=null?sw.duration:(w?w.duration:state.duration);
+  state.participants=sw.participants!=null?sw.participants:(w?w.participants:state.participants);
+  if(sw.difficulty!=null)state.difficulty=sw.difficulty;else if(w&&w.diff!=null)state.difficulty=w.diff;
+  if(Array.isArray(sw.props))state.props=sw.props.slice();
+  if(sw.includeWarmup!=null)state.includeWarmup=sw.includeWarmup;
+  if(sw.includeCooldown!=null)state.includeCooldown=sw.includeCooldown;
+  if(sw.warmupDuration!=null)state.warmupDuration=sw.warmupDuration;else if(w&&w.warmupDuration!=null)state.warmupDuration=w.warmupDuration;
+  if(sw.ygigWorkSec!=null)state.ygigWorkSec=sw.ygigWorkSec;else if(w&&w.ygigWorkSec!=null)state.ygigWorkSec=w.ygigWorkSec;
+}
+function loadSavedWorkout(id){
+  const sw=state.savedWorkouts.find(s=>s.id===id);if(!sw||!sw.workout)return;
+  applySavedWorkout(sw);
+  renderPlanEditor();showScreen('plan-editor-screen');
+  showToast('Loaded “'+sw.name+'”');
+}
+function goLiveSavedWorkout(id){
+  const sw=state.savedWorkouts.find(s=>s.id===id);if(!sw||!sw.workout)return;
+  applySavedWorkout(sw);
+  renderPlanEditor();
+  goLive();
+}
+function deleteSavedWorkout(id){
+  const sw=state.savedWorkouts.find(s=>s.id===id);
+  if(sw&&!confirm('Delete “'+sw.name+'”?\n\nThis cannot be undone.'))return;
+  state.savedWorkouts=state.savedWorkouts.filter(s=>s.id!==id);saveToStorage();showHistory();
+}
 
 // ─── TIMER SEQUENCE ───────────────────────────────────────────
 
@@ -2137,6 +2232,13 @@ document.addEventListener('DOMContentLoaded',()=>{
   // Athlete mode takes over the page entirely; skip the instructor boot.
   if (window.__ATHLETE_MODE) return;
   renderPropsGrid();
+  const scf=document.getElementById('save-class-form');
+  if(scf)scf.addEventListener('submit',e=>{
+    e.preventDefault();
+    const input=document.getElementById('save-class-name');
+    saveWorkout(input?input.value:'');
+    closeSaveClassModal();
+  });
   // Offer to pick a dropped class back up before anything else steals focus.
   setTimeout(offerSessionResume,350);
 });
