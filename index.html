@@ -269,7 +269,6 @@ if (typeof ihMountGate !== 'function') {
 <span class="badge-diff" id="plan-diff-badge"></span>
 </div>
 <div class="header-actions">
-<button class="icon-btn sound-toggle-btn" onclick="toggleSound()" title="Audio cues">🔊</button>
 <button class="icon-btn" onclick="openSavePlanModal()" title="Save Plan">💾</button>
 <button class="icon-btn" onclick="exportPDF()" title="PDF">📄</button>
 </div>
@@ -302,6 +301,7 @@ if (typeof ihMountGate !== 'function') {
 <button class="back-btn" onclick="goToPlanEditor()">← Plan</button>
 <h2 id="timer-style-name"></h2>
 <div class="timer-header-right">
+<button class="icon-btn sound-toggle-btn" onclick="toggleSound()" title="Audio cues">🔊</button>
 <button class="icon-btn" id="qr-share-btn" onclick="showClassQR()" style="display:none">🔗 Share Link</button>
 <button class="icon-btn" onclick="switchToParticipant()">📺 Class View</button>
 <button class="back-btn danger" onclick="goBack()">✕ Exit</button>
@@ -352,6 +352,7 @@ if (typeof ihMountGate !== 'function') {
 <div class="p-header">
 <span class="p-title" id="p-title-label">⚡ LIVE CLASS</span>
 <div class="p-header-actions">
+<button class="p-back-btn sound-toggle-btn" onclick="toggleSound()" title="Audio cues">🔊</button>
 <button class="p-back-btn" id="qr-live-btn" onclick="showClassQR()" style="display:none">🔗 Share Link</button>
 <button class="p-back-btn p-instructor-btn" onclick="switchToInstructor()">🎓</button>
 </div>

@@ -33,8 +33,8 @@ const AUTH = {
   salt: 'inspire-habits',
 
   // ── PASTE NEW CODE LINES BELOW THIS LINE ──
-  instructor: 'e2a80b930b539702b03a32b99acd68f340fbffbc81a46b4a8155dd0b251f9e34',
-  athlete:    'c0b1a2b3208aef1fa772c83a201cc83e75878e9301d005979ba507c066b8b3cc',
+  instructor: 'da2f6d3d9ffabc0b0058ec120c998e0b797425b038a98accd00798a65c9cd694',
+  athlete:    '7c39e370175cfc5e9c7cddfea274684faeb6621106c6a7806e0f036f76661562',
   // ── PASTE NEW CODE LINES ABOVE THIS LINE ──
 };
 
@@ -173,6 +173,19 @@ function ihUsingShippedCodes() {
       || AUTH.athlete === AUTH_SHIPPED.a;
 }
 
+// Naming the code that's actually still public matters once one of the two
+// has been changed — "change both" sends you looking for a problem you
+// already fixed, and makes the warning easy to start ignoring.
+function ihShippedCodeWarning() {
+  const i = AUTH.instructor === AUTH_SHIPPED.i;
+  const a = AUTH.athlete === AUTH_SHIPPED.a;
+  const which = (i && a) ? 'Both codes are' : i ? 'The instructor code is' : 'The athlete code is';
+  const fix   = (i && a) ? 'change both' : 'change it';
+  return which + ' still the one this app shipped with. Anyone who has seen ' +
+    'the instructions knows ' + ((i && a) ? 'them' : 'it') + ' — ' + fix +
+    ' before you rely on this.';
+}
+
 function ihSignIn(code) {
   const hash = ihHash(code);
   const role = ihRoleFor(hash);
@@ -269,9 +282,7 @@ function ihLockScreen() {
     '<div class="ih-lock-err" id="ih-lock-err" role="alert"></div>' +
     '<div class="ih-lock-hint">Athletes: this is the class code on the screen ' +
       'at the front, or ask your instructor.</div>' +
-    (shipped ? '<div class="ih-lock-warn">⚠ This app is still using the codes it ' +
-      'shipped with. Anyone who has seen the instructions knows them — ' +
-      'change both codes before you rely on this.</div>' : '') +
+    (shipped ? '<div class="ih-lock-warn">⚠ ' + ihShippedCodeWarning() + '</div>' : '') +
   '</div>';
 }
 
@@ -367,8 +378,7 @@ function showAccessCodes() {
       'athletes. Type a new code below to get the line to paste into ' +
       '<code>auth.js</code>.</p>' +
     (ihUsingShippedCodes()
-      ? '<div class="ih-lock-warn">⚠ You\'re still using the codes this app ' +
-        'shipped with. Change both before you rely on them.</div>'
+      ? '<div class="ih-lock-warn">⚠ ' + ihShippedCodeWarning() + '</div>'
       : '') +
     // If a change doesn't seem to "take", it is nearly always the browser
     // still running a cached copy of the old auth.js. Showing what is

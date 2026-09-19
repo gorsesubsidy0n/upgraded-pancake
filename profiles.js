@@ -128,11 +128,71 @@ function selectProfileEmoji(profileId, emoji) {
 }
 
 function switchProfile(id) {
+  if (!PROFILES[id]) return;
+  if (id === profileState.activeProfile) return;
+  // Switching mid-class would swap the plan out from under a running timer
+  // and file the class under the wrong person.
+  if (typeof state !== 'undefined' && state.timer && state.timer.isRunning) {
+    showToast('Finish or stop the class before switching instructor', 'error');
+    renderProfileSwitcher();
+    return;
+  }
   profileState.activeProfile = id;
   localStorage.setItem('hiit_active_profile', id);
+  if (typeof setCurrentInstructorId === 'function') setCurrentInstructorId(id);
+  // Their classes, not the last person's.
+  if (typeof loadPersonalData === 'function') loadPersonalData();
+  if (typeof Roster !== 'undefined' && Roster.load) Roster.load();
   renderProfileSwitcher();
   updateProfileBadge();
+  const hs = document.getElementById('history-screen');
+  if (hs && hs.classList.contains('active') && typeof showHistory === 'function') showHistory();
   showToast('Switched to ' + PROFILES[id].name + ' ' + PROFILES[id].icon);
+}
+
+// ── WHO IS TEACHING? ──────────────────────────────────────────
+// The studio laptop gets handed between instructors all day. Rather than
+// trusting whoever was last active, the app asks on every fresh open and
+// keeps the answer only for that sitting, so nobody accidentally saves a
+// class into a colleague's list or teaches from theirs.
+function ihNeedsInstructorPick() {
+  if (window.__ATHLETE_MODE) return false;
+  if (typeof ihRole === 'function' && ihRole() !== 'instructor') return false;
+  return typeof currentInstructorId === 'function' && !currentInstructorId();
+}
+
+function ihInstructorPickerMarkup() {
+  const cards = Object.values(PROFILES).map(p =>
+    '<button type="button" class="who-card who-' + p.color + '" data-who="' + p.id + '">' +
+      '<span class="who-icon">' + p.icon + '</span>' +
+      '<span class="who-name">' + escapeHtml(p.name) + '</span>' +
+    '</button>').join('');
+  return '<div class="who-card-wrap">' +
+      '<div class="who-title">Who\u2019s teaching?</div>' +
+      '<p class="who-sub">Your saved classes and history are kept separately, ' +
+        'so pick yourself before you build or teach.</p>' +
+      '<div class="who-grid">' + cards + '</div>' +
+      '<p class="who-hint">This laptop will forget when you close it.</p>' +
+    '</div>';
+}
+
+/** Blocks the app until an instructor identifies themselves. */
+function ihMountInstructorPicker(onPick) {
+  if (document.getElementById('ih-who')) return;
+  const wrap = document.createElement('div');
+  wrap.id = 'ih-who';
+  wrap.innerHTML = ihInstructorPickerMarkup();
+  document.body.appendChild(wrap);
+  document.documentElement.classList.add('ih-choosing');
+  wrap.addEventListener('click', e => {
+    const btn = e.target.closest('[data-who]');
+    if (!btn) return;
+    const id = btn.getAttribute('data-who');
+    if (!PROFILES[id]) return;
+    wrap.remove();
+    document.documentElement.classList.remove('ih-choosing');
+    onPick(id);
+  });
 }
 
 function updateProfileBadge() {

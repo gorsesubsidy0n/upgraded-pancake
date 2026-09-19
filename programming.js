@@ -7,7 +7,8 @@
 //    1. Every MAJOR muscle group required by the chosen focus is
 //       trained (full body => all 7).
 //    2. MINOR / accessory groups ROTATE class-to-class, driven by
-//       what the instructor's recent classes already hit.
+//       what the studio's recent classes already hit — every
+//       instructor's, since the athletes are the same people.
 //    3. No two consecutive exercises hammer the same prime mover
 //       or fight over the same prop.
 // ============================================================
@@ -19,16 +20,17 @@ const RECENCY_WINDOW = 5;
 /**
  * Newest-first list of classes actually taught, each normalised to
  * { when, muscleLoad, exerciseNames, style, muscle }.
- * Sources: completed workouts (hiit_history) + saved plans whose
- * class date/time has already passed. Scoped to the active
- * instructor profile when profiles.js is loaded.
+ * Sources: completed workouts (the shared studio log) + saved plans whose
+ * class date/time has already passed.
+ *
+ * Deliberately studio-wide, not per-instructor: the athletes in the room are
+ * the same bodies whoever is on the floor. If Kat hammered glutes on Monday,
+ * Carson's Tuesday class needs to rotate away from them too.
  */
 function getTaughtClasses(limit = RECENCY_WINDOW) {
-  const activeId = (typeof profileState !== 'undefined') ? profileState.activeProfile : null;
   const out = [];
 
   (state.workoutHistory || []).forEach(h => {
-    if (activeId && h.profileId && h.profileId !== activeId) return;
     out.push({
       when: h.ts || h.id || 0,
       muscleLoad: h.muscleLoad || null,
@@ -36,13 +38,15 @@ function getTaughtClasses(limit = RECENCY_WINDOW) {
       style: h.style, muscle: h.muscle,
       duration: h.duration || 0, participants: h.participants || 0,
       exercises: h.exercises || (h.exerciseNames || []).length,
+      instructorId: h.instructorId || h.profileId || null,
+      instructorName: h.instructorName || null,
       source: 'taught',
     });
   });
 
   if (typeof getProfilePlans === 'function' && typeof PROFILES !== 'undefined') {
     const now = Date.now();
-    const ids = activeId ? [activeId] : Object.keys(PROFILES);
+    const ids = Object.keys(PROFILES);
     ids.forEach(id => {
       getProfilePlans(id).forEach(plan => {
         const t = new Date(plan.classDateTime).getTime();
@@ -57,6 +61,8 @@ function getTaughtClasses(limit = RECENCY_WINDOW) {
           duration: plan.duration || plan.workout?.duration || 0,
           participants: plan.participants || plan.workout?.participants || 0,
           exercises: exs.length,
+          instructorId: id,
+          instructorName: (PROFILES[id] || {}).name || null,
           source: 'scheduled',
         });
       });
@@ -527,7 +533,7 @@ function rebalanceWorkout() {
 // ══════════════════════════════════════════════════════════════
 //  TRAINING LOAD — weekly volume & muscle distribution
 //  Answers "am I hammering the same things week after week?"
-//  across every class this instructor has actually taught.
+//  across every class taught at the studio.
 // ══════════════════════════════════════════════════════════════
 const LOAD_WEEKS = 8;
 

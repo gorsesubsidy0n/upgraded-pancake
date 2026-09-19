@@ -10,8 +10,8 @@ const state = {
   includeWarmup: true, includeCooldown: true, warmupDuration: 7, ygigWorkSec: 45,
   workout: null,
   timer: { interval:null, seconds:0, current:0, isRunning:false, sequence:[], totalSteps:0 },
-  savedWorkouts:   JSON.parse(localStorage.getItem('hiit_saved')           || '[]'),
-  workoutHistory:  JSON.parse(localStorage.getItem('hiit_history')         || '[]'),
+  savedWorkouts:   [],
+  workoutHistory:  [],
   customExercises: JSON.parse(localStorage.getItem('hiit_custom_v2')       || '{}'),
   customWarmup:    JSON.parse(localStorage.getItem('hiit_custom_warmup')   || '[]'),
   customCooldown:  JSON.parse(localStorage.getItem('hiit_custom_cooldown') || '[]'),
@@ -607,9 +607,129 @@ function showScreen(id) {
   document.getElementById(id).classList.add('active');
   window.scrollTo(0,0);
 }
+// ─── PER-INSTRUCTOR STORAGE ───────────────────────────────────
+// The studio laptop is shared. Kat builds her classes at home, then teaches
+// from the same machine Carson taught on an hour earlier. Saved classes and
+// history used to sit in one global key, so whoever saved last silently
+// wiped the other's work, and everyone saw everyone else's list.
+//
+// Anything personal is now filed under the instructor who signed in for
+// this sitting. Equipment and the custom exercise library stay shared on
+// purpose — they describe the studio, not the person.
+const INSTRUCTOR_SESSION_KEY = 'hiit_session_instructor';
+const PERSONAL_SAVED   = 'hiit_saved';
+const PERSONAL_HISTORY = 'hiit_history';
+// Classes actually taught are a studio record, not a personal one. Whoever is
+// on the floor next needs to know the room already did heavy glutes on
+// Monday, so this one key is deliberately shared by all three instructors and
+// every entry carries the name of whoever ran it.
+const STUDIO_HISTORY = 'hiit_history_studio';
+
+// sessionStorage, not localStorage: it survives a refresh mid-class but dies
+// with the tab, so the next person to open the app is always asked who they
+// are instead of inheriting whoever taught last.
+function currentInstructorId() {
+  try { return sessionStorage.getItem(INSTRUCTOR_SESSION_KEY) || ''; } catch (e) { return ''; }
+}
+function setCurrentInstructorId(id) {
+  try { sessionStorage.setItem(INSTRUCTOR_SESSION_KEY, id); } catch (e) {}
+}
+function personalKey(base, id) {
+  const who = id || currentInstructorId();
+  return who ? base + '__' + who : base;
+}
+
+// The old shared lists belong to whoever was last active, so hand them over
+// once rather than letting three people open the new build to empty shelves.
+const PERSONAL_SPLIT_FLAG = 'hiit_personal_split_done';
+function migrateLegacyPersonalData() {
+  try {
+    if (localStorage.getItem(PERSONAL_SPLIT_FLAG)) return;
+    const owner = localStorage.getItem('hiit_active_profile') || 'kat';
+    [PERSONAL_SAVED, PERSONAL_HISTORY].forEach(base => {
+      const legacy = localStorage.getItem(base);
+      const target = base + '__' + owner;
+      if (legacy && !localStorage.getItem(target)) localStorage.setItem(target, legacy);
+    });
+    localStorage.setItem(PERSONAL_SPLIT_FLAG, '1');
+  } catch (e) {}
+}
+
+// Histories that were filed per-instructor get poured into the one studio log
+// and stamped with whoever owned that shelf, so nobody loses classes they
+// already taught when this build lands.
+const STUDIO_MERGE_FLAG = 'hiit_history_studio_done';
+function migrateHistoryToStudio() {
+  try {
+    if (localStorage.getItem(STUDIO_MERGE_FLAG)) return;
+    const ids = (typeof PROFILES !== 'undefined') ? Object.keys(PROFILES) : ['kat', 'carson', 'melissa'];
+    // A pre-profiles history has no owner recorded. It belongs to whoever was
+    // last active — the same assumption migrateLegacyPersonalData already
+    // makes — and must NOT be pinned on whoever happens to open this build
+    // first, which would credit their classes to a stranger.
+    const legacyOwner = localStorage.getItem('hiit_active_profile') || 'kat';
+    const lists = [readJSON(STUDIO_HISTORY, '[]')];
+    ids.forEach(id => {
+      lists.push(readJSON(PERSONAL_HISTORY + '__' + id, '[]')
+        .map(h => stampInstructor(h, h.instructorId || h.profileId || id)));
+    });
+    lists.push(readJSON(PERSONAL_HISTORY, '[]')
+      .map(h => stampInstructor(h, h.instructorId || h.profileId || legacyOwner)));
+    localStorage.setItem(STUDIO_HISTORY, JSON.stringify(mergeById.apply(null, lists).slice(0, HISTORY_CAP)));
+    localStorage.setItem(STUDIO_MERGE_FLAG, '1');
+  } catch (e) {}
+}
+
+// Three people now share one shelf, so a 50-class cap would quietly evict a
+// third of everyone's record.
+const HISTORY_CAP = 150;
+
+/** Attaches who taught it. Name is copied, not looked up later, so the log
+ *  still reads correctly if a profile is ever renamed or removed. */
+function stampInstructor(entry, id) {
+  const who = id || currentInstructorId() ||
+    ((typeof profileState !== 'undefined') ? profileState.activeProfile : null);
+  const p = (typeof PROFILES !== 'undefined' && who) ? PROFILES[who] : null;
+  entry.instructorId   = who || null;
+  entry.instructorName = entry.instructorName || (p ? p.name : (who || 'Unknown'));
+  entry.instructorIcon = entry.instructorIcon || (p ? p.icon : '🏋️');
+  return entry;
+}
+
+function readJSON(key, fallback) {
+  try { return JSON.parse(localStorage.getItem(key) || fallback); }
+  catch (e) { return JSON.parse(fallback); }
+}
+/** Pulls the signed-in instructor's own classes, plus the shared studio log. */
+function loadPersonalData() {
+  state.savedWorkouts  = readJSON(personalKey(PERSONAL_SAVED), '[]');
+  state.workoutHistory = readJSON(STUDIO_HISTORY, '[]');
+}
+
+// Two tabs on one laptop each hold their own copy of these lists, so writing
+// one back wholesale drops whatever the other tab added. Merging on the way
+// out costs nothing and makes a lost save impossible.
+function mergeById(...lists) {
+  const seen = new Set(); const out = [];
+  lists.forEach(list => (list || []).forEach(item => {
+    if (item && item.id != null && !seen.has(item.id)) { seen.add(item.id); out.push(item); }
+  }));
+  return out.sort((a, b) => (b.id || 0) - (a.id || 0));
+}
+function syncSavedWorkouts() {
+  state.savedWorkouts = mergeById(state.savedWorkouts, readJSON(personalKey(PERSONAL_SAVED), '[]'));
+  return state.savedWorkouts;
+}
+/** Same protection for the studio log — two instructors teaching back-to-back
+ *  on one laptop must not overwrite each other's classes. */
+function syncHistory() {
+  state.workoutHistory = mergeById(state.workoutHistory, readJSON(STUDIO_HISTORY, '[]')).slice(0, HISTORY_CAP);
+  return state.workoutHistory;
+}
+
 function saveToStorage() {
-  localStorage.setItem('hiit_saved',           JSON.stringify(state.savedWorkouts));
-  localStorage.setItem('hiit_history',         JSON.stringify(state.workoutHistory));
+  localStorage.setItem(personalKey(PERSONAL_SAVED), JSON.stringify(state.savedWorkouts));
+  localStorage.setItem(STUDIO_HISTORY, JSON.stringify(syncHistory()));
   localStorage.setItem('hiit_custom_v2',       JSON.stringify(state.customExercises));
   localStorage.setItem('hiit_custom_warmup',   JSON.stringify(state.customWarmup));
   localStorage.setItem('hiit_custom_cooldown', JSON.stringify(state.customCooldown));
@@ -1606,7 +1726,8 @@ function saveWorkout(name){
     warmupDuration:state.warmupDuration,
     ygigWorkSec:state.ygigWorkSec
   };
-  state.savedWorkouts.unshift(saved);if(state.savedWorkouts.length>20)state.savedWorkouts.pop();
+  state.savedWorkouts=mergeById([saved],state.savedWorkouts,readJSON(personalKey(PERSONAL_SAVED),'[]'));
+  if(state.savedWorkouts.length>20)state.savedWorkouts.length=20;
   saveToStorage();showToast('✅ Saved “'+clean+'”','success');
   return saved;
 }
@@ -1654,7 +1775,7 @@ function logWorkoutComplete(){
   if(typeof Roster!=='undefined'&&typeof MA!=='undefined'&&MA.enabled)Roster.commitAttendance();
   // Rich entry: the coverage engine reads muscleLoad + exerciseNames to
   // rotate accessory work away from what was just taught.
-  state.workoutHistory.unshift({
+  state.workoutHistory.unshift(stampInstructor({
     id:Date.now(), ts:Date.now(),
     date:new Date().toLocaleDateString(), time:new Date().toLocaleTimeString(),
     style:state.workout.styleCfg.name,
@@ -1665,19 +1786,23 @@ function logWorkoutComplete(){
     exerciseNames:exs.map(e=>e.name),
     muscleLoad:muscleLoadForExercises(exs),
     accessoryFocus:state.workout.accessoryFocus||[],
-    profileId:(typeof profileState!=='undefined')?profileState.activeProfile:null,
-  });
-  if(state.workoutHistory.length>50)state.workoutHistory.pop();
+    profileId:currentInstructorId()||((typeof profileState!=='undefined')?profileState.activeProfile:null),
+  }));
   saveToStorage();
 }
 function showHistory(){
+  syncSavedWorkouts();
+  syncHistory();
   const hc=document.getElementById('history-list');hc.innerHTML='';
-  if(!state.workoutHistory.length)hc.innerHTML='<div class="empty-state">No workout history yet.</div>';
+  if(!state.workoutHistory.length)hc.innerHTML='<div class="empty-state">No classes taught yet.<br>Every class run from this studio shows up here, whoever taught it.</div>';
   else state.workoutHistory.forEach(e=>{
     const d=document.createElement('div');d.className='history-card';
     const top=Object.entries(e.muscleLoad||{}).sort((a,b)=>b[1]-a[1]).slice(0,6)
       .map(([id])=>'<span class="hist-mg">'+muscleIcon(id)+' '+escapeHtml(muscleLabel(id,true))+'</span>').join('');
-    d.innerHTML='<div class="history-date">'+escapeHtml(e.date)+' '+escapeHtml(e.time)+'</div>'+
+    const mine=e.instructorId&&e.instructorId===currentInstructorId();
+    const who='<span class="hist-who'+(mine?' is-mine':'')+'">'+
+      (e.instructorIcon||'🏋️')+' '+escapeHtml(e.instructorName||'Unknown')+(mine?' · you':'')+'</span>';
+    d.innerHTML='<div class="history-top"><div class="history-date">'+escapeHtml(e.date)+' '+escapeHtml(e.time)+'</div>'+who+'</div>'+
       '<div class="history-info"><span class="history-style">'+escapeHtml(e.style)+'</span><span class="history-muscle">'+escapeHtml(e.muscle)+'</span></div>'+
       '<div class="history-meta">'+e.duration+' min · '+e.participants+' people · '+e.exercises+' exercises</div>'+
       (top?'<div class="hist-mg-row">'+top+'</div>':'');
@@ -1738,6 +1863,7 @@ function goLiveSavedWorkout(id){
   goLive();
 }
 function deleteSavedWorkout(id){
+  syncSavedWorkouts();
   const sw=state.savedWorkouts.find(s=>s.id===id);
   if(sw&&!confirm('Delete “'+sw.name+'”?\n\nThis cannot be undone.'))return;
   state.savedWorkouts=state.savedWorkouts.filter(s=>s.id!==id);saveToStorage();showHistory();
@@ -1974,8 +2100,28 @@ function loadParticipantStep(idx){
 }
 // ─── AUDIO CUES ───────────────────────────────────────────────
 // Synthesised with WebAudio — no asset files, works offline.
+// ─── AUDIO CUES ───────────────────────────────────────────────
+// Two different audiences, two different sensible defaults. The instructor's
+// laptop is the room's cue, so it starts ON. A phone starts OFF — a dozen
+// handsets beeping a half-second out of sync is worse than silence — and the
+// athlete turns it on if they want it. Separate keys so one never overrides
+// the other when an instructor also opens a class link on her own machine.
+function soundIsAthlete(){
+  return !!(window.__ATHLETE_MODE || /[#&]c=/.test(location.hash || ''));
+}
+function soundKey(){ return soundIsAthlete() ? 'hiit_sound_athlete' : 'hiit_sound'; }
+function soundEnabled(){
+  let v = null;
+  try { v = localStorage.getItem(soundKey()); } catch (e) {}
+  if (v === 'on')  return true;
+  if (v === 'off') return false;
+  return !soundIsAthlete();
+}
+
 const audioCue = {
-  enabled: localStorage.getItem('hiit_sound') !== 'off',
+  // A getter, because __ATHLETE_MODE is not known when this file parses.
+  get enabled() { return soundEnabled(); },
+  set enabled(v) { try { localStorage.setItem(soundKey(), v ? 'on' : 'off'); } catch (e) {} },
   ctx: null,
   ensure() {
     if (!this.ctx) {
@@ -2001,11 +2147,23 @@ const audioCue = {
   finish()     { [523,659,784].forEach((f,i)=>setTimeout(()=>this.beep(f,260,0.22), i*180)); },
 };
 function toggleSound(){
-  audioCue.enabled = !audioCue.enabled;
-  localStorage.setItem('hiit_sound', audioCue.enabled ? 'on' : 'off');
-  document.querySelectorAll('.sound-toggle-btn').forEach(b => b.textContent = audioCue.enabled ? '🔊' : '🔇');
-  if (audioCue.enabled) audioCue.beep(880, 120);
-  showToast(audioCue.enabled ? '🔊 Audio cues on' : '🔇 Audio cues off');
+  const on = !audioCue.enabled;
+  audioCue.enabled = on;
+  syncSoundButtons();
+  // Unlocking WebAudio has to happen inside the tap itself, or iOS keeps the
+  // context suspended and every later cue is silently dropped.
+  if (on) { audioCue.ensure(); audioCue.beep(880, 120); }
+  showToast(on ? '🔊 Sound on' : '🔇 Sound off');
+}
+/** Keeps every sound button on screen showing the true state. */
+function syncSoundButtons(){
+  const on = audioCue.enabled;
+  document.querySelectorAll('.sound-toggle-btn').forEach(b => {
+    b.textContent = on ? '🔊' : '🔇';
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    b.title = on ? 'Sound on — tap to mute' : 'Sound off — tap for audio cues';
+    b.classList.toggle('is-muted', !on);
+  });
 }
 
 function updateTimerDisplay(){
@@ -2068,11 +2226,15 @@ function prevExercise(){stopTimer();state.timer.current=Math.max(0,state.timer.c
 // A dropped phone or an accidental refresh mid-class used to lose
 // everything. The running class is now checkpointed to localStorage
 // so it can be resumed exactly where it left off.
-const LIVE_KEY='hiit_live_session';
+// Scoped to the instructor too: two people mid-class on one laptop were
+// overwriting each other's checkpoint, and the first to finish wiped the
+// other's only crash-recovery.
+const LIVE_KEY_BASE='hiit_live_session';
+function liveKey(){return personalKey(LIVE_KEY_BASE);}
 function persistLiveSession(){
   try{
     if(!state.workout||!state.timer.sequence.length)return;
-    localStorage.setItem(LIVE_KEY,JSON.stringify({
+    localStorage.setItem(liveKey(),JSON.stringify({
       savedAt:Date.now(),
       workout:state.workout,
       muscle:state.muscle,
@@ -2084,10 +2246,10 @@ function persistLiveSession(){
     }));
   }catch(e){/* storage full or blocked — never break the class over it */}
 }
-function clearLiveSession(){try{localStorage.removeItem(LIVE_KEY);}catch(e){}}
+function clearLiveSession(){try{localStorage.removeItem(liveKey());}catch(e){}}
 function readLiveSession(){
   try{
-    const raw=localStorage.getItem(LIVE_KEY);if(!raw)return null;
+    const raw=localStorage.getItem(liveKey());if(!raw)return null;
     const s=JSON.parse(raw);
     // Anything older than 4 hours is a stale class, not a refresh.
     if(!s||!s.workout||Date.now()-s.savedAt>4*60*60*1000){clearLiveSession();return null;}
@@ -2232,6 +2394,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   // Athlete mode takes over the page entirely; skip the instructor boot.
   if (window.__ATHLETE_MODE) return;
   renderPropsGrid();
+  syncSoundButtons();
   const scf=document.getElementById('save-class-form');
   if(scf)scf.addEventListener('submit',e=>{
     e.preventDefault();
@@ -2239,6 +2402,41 @@ document.addEventListener('DOMContentLoaded',()=>{
     saveWorkout(input?input.value:'');
     closeSaveClassModal();
   });
-  // Offer to pick a dropped class back up before anything else steals focus.
-  setTimeout(offerSessionResume,350);
+  startInstructorSitting();
 });
+
+// Nothing personal is read until we know whose it is. Everything that used
+// to run straight from DOMContentLoaded now waits behind the name picker.
+function beginInstructorSession(id){
+  setCurrentInstructorId(id);
+  migrateLegacyPersonalData();
+  migrateHistoryToStudio();
+  if(typeof profileState!=='undefined'){
+    profileState.activeProfile=id;
+    try{localStorage.setItem('hiit_active_profile',id);}catch(e){}
+  }
+  loadPersonalData();
+  if(typeof Roster!=='undefined'&&Roster.load)Roster.load();
+  if(typeof renderProfileSwitcher==='function')renderProfileSwitcher();
+  if(typeof updateProfileBadge==='function')updateProfileBadge();
+  // Resume only after the lists are the right person's, so the bar can't
+  // offer a class belonging to whoever taught before them.
+  setTimeout(offerSessionResume,350);
+}
+function startInstructorSitting(){
+  const already=currentInstructorId();
+  if(already){beginInstructorSession(already);return;}
+  // If profiles.js failed to load, fall back to the shared keys rather than
+  // locking an instructor out of their own app.
+  if(typeof ihNeedsInstructorPick!=='function'||typeof ihMountInstructorPicker!=='function'){
+    loadPersonalData();
+    setTimeout(offerSessionResume,350);
+    return;
+  }
+  if(!ihNeedsInstructorPick()){
+    loadPersonalData();
+    setTimeout(offerSessionResume,350);
+    return;
+  }
+  ihMountInstructorPicker(beginInstructorSession);
+}

@@ -2060,3 +2060,47 @@ html.ih-locked, html.ih-locked body { overflow: hidden; }
 .saved-actions .small-btn.go { background: var(--green-bg); color: var(--green);
                                border-color: var(--green); font-weight: 700; flex: 2 1 auto; }
 .saved-actions .small-btn.danger { flex: 0 0 44px; }
+/* ─── WHO IS TEACHING? ──────────────────────────────────────── */
+/* Sits above everything, including the class clock, so it cannot be
+   worked around by scrolling. */
+html.ih-choosing, html.ih-choosing body { overflow: hidden; }
+#ih-who { position: fixed; inset: 0; z-index: 4000; display: flex;
+          align-items: center; justify-content: center; padding: 20px;
+          background: var(--bg); overflow-y: auto; }
+.who-card-wrap { width: 100%; max-width: 440px; text-align: center;
+                 background: var(--card); border: 1px solid var(--border);
+                 border-radius: var(--radius); padding: 32px 24px; }
+.who-title { font-size: 26px; font-weight: 800; color: var(--text); }
+.who-sub { font-size: 14px; line-height: 1.5; color: var(--text2); margin: 10px 0 22px; }
+.who-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 12px; }
+.who-card { display: flex; flex-direction: column; align-items: center; gap: 8px;
+            padding: 20px 10px; cursor: pointer; color: var(--text);
+            background: var(--bg3); border: 2px solid var(--border2);
+            border-radius: var(--radius-sm); transition: transform .12s, border-color .12s; }
+.who-card:hover { transform: translateY(-2px); border-color: var(--accent); }
+.who-card:focus-visible { outline: none; border-color: var(--accent);
+                          box-shadow: 0 0 0 3px var(--accent-glow); }
+.who-icon { font-size: 34px; line-height: 1; }
+.who-name { font-size: 15px; font-weight: 700; }
+.who-hint { font-size: 12px; color: var(--text2); margin-top: 20px; }
+@media (max-width: 380px) { .who-grid { grid-template-columns: 1fr; } }
+/* ─── SOUND TOGGLE ──────────────────────────────────────────── */
+/* Muted is the resting state on a phone, so it must not read as broken —
+   just quieter than its neighbours. */
+.sound-toggle-btn.is-muted { opacity: .55; }
+.sound-toggle-btn { transition: opacity .12s; }
+
+.ath-head-btns { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.ath-sound { background: none; border: 1px solid var(--border); color: var(--text);
+             border-radius: 999px; width: 34px; height: 30px; font-size: 14px;
+             line-height: 1; cursor: pointer; flex-shrink: 0; padding: 0; }
+.ath-sound:active { transform: scale(.94); }
+/* ─── WHO TAUGHT IT ─────────────────────────────────────────── */
+.history-top { display: flex; align-items: center; justify-content: space-between;
+               gap: 8px; margin-bottom: 4px; }
+.hist-who { font-size: 11px; font-weight: 700; color: var(--text2);
+            background: var(--bg3); border: 1px solid var(--border);
+            border-radius: 999px; padding: 3px 9px; white-space: nowrap; flex-shrink: 0; }
+/* Your own classes sit in a shared list, so they need to be findable at a glance. */
+.hist-who.is-mine { color: var(--accent); border-color: var(--accent);
+                    background: var(--accent-glow); }
