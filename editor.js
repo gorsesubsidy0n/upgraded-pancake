@@ -178,8 +178,8 @@ function buildPlanEntry(entry, prev, idx) {
   switch (w.style) {
     case 'tabata':  reps='20s';    unit='work'; seconds=20; break;
     case 'circuit': reps='45s';    unit='work'; seconds=45; break;
-    case 'ladder':  reps='5→20';   unit='reps'; seconds=30; break;
-    case 'pyramid': reps='5→20→5'; unit='reps'; seconds=30; break;
+    case 'ladder':  reps=rungRepsLabel('ladder', w);  unit='reps'; seconds=30; break;
+    case 'pyramid': reps=rungRepsLabel('pyramid', w); unit='reps'; seconds=30; break;
     case 'hundred': reps=(((idx||0)+1)*10)+''; unit='reps'; seconds=Math.max(30,((idx||0)+1)*8); break;
     case 'ygig':    reps=randInt(range[0],range[1]); unit='reps'; seconds=w.ygigWorkSec||45; break;
     case 'custom':  reps=null; unit=null; seconds=null; break;

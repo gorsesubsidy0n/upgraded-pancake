@@ -23,15 +23,29 @@
 
   // Style → tracker mode. A class in any other style is still scannable when
   // it has a Core Burner, and then uses the 'b' (finisher) tracker.
-  const TRACKABLE = { amrap: 'a', hundred: 'h', custom: 'c' };
+  //   a = AMRAP · h = 100 Reps · p = Pyramid · l = Ladder
+  //   c = Custom on the clock · s = Custom self-paced · b = burner only
+  //   t = any other style, mirroring the instructor's clock
+  const TRACKABLE = { amrap: 'a', hundred: 'h', pyramid: 'p', ladder: 'l' };
   const BURNER_ONLY = 'b';
+  const CLOCK_MODE = 't';
   const HASH_KEY = 'c';
   const UID_KEY = 'u';
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
   const hasBurner = w => !!(w && w.coreBurner && (w.coreBurner.exercises || []).length);
-  const trackerMode = w => !w ? null : (TRACKABLE[w.style] || (hasBurner(w) ? BURNER_ONLY : null));
+  const trackerMode = w => {
+    if (!w) return null;
+    if (w.style === 'custom') return (w.custom && w.custom.pace === 'self') ? 's' : 'c';
+    return TRACKABLE[w.style] || (w.style ? CLOCK_MODE : null);
+  };
+
+  // Modes where the athlete counts their own reps against a target, rather
+  // than ticking a checklist the instructor's clock drives.
+  const SELF_PACED_MODES = { a: 1, h: 1, p: 1, l: 1, s: 1 };
+  // Fallback rungs for links made before the ladder was carried in the payload.
+  const RUNG_FALLBACK = { p: [5, 10, 15, 20, 15, 10, 5], l: [5, 10, 15, 20] };
 
   // ── Payload codec ────────────────────────────────────────────────────
   // Field separators are stripped from content rather than escaped: exercise
@@ -55,14 +69,91 @@
     return { name: f[0] || '', reps: f[1] || '', unit: f[2] || '' };
   });
 
-  // v2 adds main-block rounds and a Core Burner block. v1 links are still
-  // read, so a code scanned before an update keeps working for that class.
+  // ── Class plan codec ─────────────────────────────────────────────────
+  // For clock-driven styles the phone has to reproduce the instructor's
+  // timer exactly, so the whole step list travels in the link. A raw list
+  // is far too big for a QR (a 45-minute Tabata is ~170 steps), and plain
+  // run-length encoding buys nothing because work and rest alternate. What
+  // does compress is that only a couple of dozen *distinct* steps exist, so
+  // the plan is stored as a dictionary of unique steps plus one base36
+  // index per step:
+  //   token   → dur36(2) phaseCode(1) nameRef36(1 or "-")   e.g. "0k2 5", "053-"
+  //   plan    → width ! tokens ! indices ! name~name~…
+  // Tokens and indices are both fixed width so neither needs separators,
+  // which is where most of the saving comes from. Separators avoid | ^ so
+  // the plan can sit inside the existing payload untouched.
+  const PHASE_CODES = ['get-ready', 'warmup', 'work', 'rest', 'cooldown'];
+  const pad = (n, w) => { let s = n.toString(36); while (s.length < w) s = '0' + s; return s; };
+
+  function packPlan(seq) {
+    if (!seq || !seq.length) return '';
+    const nameIdx = new Map(), tokenIdx = new Map(), order = [];
+    seq.forEach(s => {
+      const dur = Math.min(1295, Math.max(0, Math.round(s.duration || 0)));
+      let code = PHASE_CODES.indexOf(s.phase);
+      if (code < 0) code = 2;
+      const nm = clean(s.name);
+      let ref = '-';
+      if (nm) {
+        if (!nameIdx.has(nm)) nameIdx.set(nm, nameIdx.size);
+        ref = pad(nameIdx.get(nm), 1);
+      }
+      const tok = pad(dur, 2) + code + ref;
+      if (!tokenIdx.has(tok)) tokenIdx.set(tok, tokenIdx.size);
+      order.push(tokenIdx.get(tok));
+    });
+    // A name index past base36 would not fit the single-char slot.
+    if (nameIdx.size > 36) return '';
+    const w = tokenIdx.size > 36 ? 2 : 1;
+    return [w, [...tokenIdx.keys()].join(''),
+            order.map(i => pad(i, w)).join(''),
+            [...nameIdx.keys()].join('~')].join('!');
+  }
+
+  function unpackPlan(raw) {
+    if (!raw) return [];
+    // Split on the first three separators only — the trailing name list is
+    // free-form and legitimately contains "!" (e.g. "Get Ready!").
+    const s = String(raw);
+    const i1 = s.indexOf('!');
+    const i2 = s.indexOf('!', i1 + 1);
+    const i3 = s.indexOf('!', i2 + 1);
+    if (i1 < 0 || i2 < 0 || i3 < 0) return [];
+    const w = parseInt(s.slice(0, i1), 10) || 1;
+    const dictRaw = s.slice(i1 + 1, i2);
+    const idx = s.slice(i2 + 1, i3);
+    const names = s.slice(i3 + 1).split('~');
+    const dict = [];
+    for (let i = 0; i + 4 <= dictRaw.length; i += 4) dict.push(dictRaw.substr(i, 4));
+    const out = [];
+    for (let i = 0; i + w <= idx.length; i += w) {
+      const tok = dict[parseInt(idx.substr(i, w), 36)];
+      if (!tok) continue;
+      const ref = tok.charAt(3);
+      out.push({
+        duration: parseInt(tok.substr(0, 2), 36) || 0,
+        phase: PHASE_CODES[parseInt(tok.charAt(2), 10)] || 'work',
+        name: ref === '-' ? '' : (names[parseInt(ref, 36)] || ''),
+      });
+    }
+    let t = 0;
+    out.forEach(st => { st.start = t; t += st.duration; });
+    return out;
+  }
+
+  // v2 adds main-block rounds and a Core Burner block. v3 adds the time cap
+  // for the whole main block. v4 adds the run-length encoded class plan and
+  // the wall-clock time step 0 began, which is what lets a phone mirror the
+  // room's clock. Older links are still read, so a code scanned before an
+  // update keeps working for that class.
   function encodePayload(p) {
     const b = p.burner || {};
     return b64urlEncode([
-      '2', p.mode, p.sid, clean(p.title), clean(p.meta),
+      '4', p.mode, p.sid, clean(p.title), clean(p.meta),
       String(p.rounds || 1), packItems(p.items),
       String(b.rounds || 0), String(b.work || 0), String(b.rest || 0), packItems(b.items),
+      String(p.cap || 0), (p.rungs || []).join(','),
+      p.plan || '', String(p.t0 || 0),
     ].join('|'));
   }
 
@@ -70,15 +161,22 @@
     const parts = b64urlDecode(raw).split('|');
     if (parts[0] === '1') {
       return { mode: parts[1], sid: parts[2], title: parts[3], meta: parts[4],
-               rounds: 1, items: unpackItems(parts[5]), burner: null };
+               rounds: 1, items: unpackItems(parts[5]), burner: null, cap: 0, rungs: null,
+               plan: [], t0: 0 };
     }
-    if (parts[0] !== '2') throw new Error('unsupported payload version');
+    if (['2', '3', '4'].indexOf(parts[0]) < 0) throw new Error('unsupported payload version');
     const bRounds = parseInt(parts[7], 10) || 0;
     const bItems = unpackItems(parts[10]);
+    const mode = parts[1];
+    const rungs = (parts[12] || '').split(',').map(n => parseInt(n, 10)).filter(n => n > 0);
     return {
-      mode: parts[1], sid: parts[2], title: parts[3], meta: parts[4],
+      mode, sid: parts[2], title: parts[3], meta: parts[4],
       rounds: parseInt(parts[5], 10) || 1,
       items: unpackItems(parts[6]),
+      cap: parseInt(parts[11], 10) || 0,
+      rungs: rungs.length ? rungs : (RUNG_FALLBACK[mode] || null),
+      plan: unpackPlan(parts[13] || ''),
+      t0: parseInt(parts[14], 10) || 0,
       burner: (bRounds && bItems.length)
         ? { rounds: bRounds, work: parseInt(parts[8], 10) || 0,
             rest: parseInt(parts[9], 10) || 0, items: bItems }
@@ -158,15 +256,26 @@
     return Math.floor(t / 60) + ':' + two(t % 60);
   }
 
+  // Same shape, but from whole seconds. Short rest steps read better as a
+  // bare count than as "0:10".
+  function mmss(secs) {
+    const t = Math.max(0, Math.round(secs || 0));
+    return t < 60 ? String(t) : Math.floor(t / 60) + ':' + two(t % 60);
+  }
+
   /* ════════════════════════════════════════════════════════════════════
      INSTRUCTOR SIDE — build the link and show the QR code
      ════════════════════════════════════════════════════════════════════ */
 
   const MODE_COPY = {
-    a: { title: '🔄 Scan to track your rounds', hint: 'Log every round and add a note without touching anyone else\'s screen.' },
-    h: { title: '💯 Scan for your rep checklist', hint: 'Tick each exercise off as you finish its reps.' },
+    a: { title: '🔄 Scan to track your rounds', hint: 'Log every round, add partial reps, and watch the block clock.' },
+    h: { title: '💯 Scan for your rep counter', hint: 'Count reps as you knock them out — the clock runs on your phone.' },
+    p: { title: '🔺 Scan to track your climb', hint: 'Mark the rung you are on and count reps as you go.' },
+    l: { title: '📈 Scan to track your climb', hint: 'Mark the rung you are on and count reps as you go.' },
+    s: { title: '🛠️ Scan to track your reps', hint: 'Work at your own pace and log reps as you finish them.' },
     c: { title: '🛠️ Scan for your class checklist', hint: 'Keep your place round by round, at your own pace.' },
     b: { title: '🎯 Scan for the Core Burner', hint: 'See the finisher and tick each move as you go.' },
+    t: { title: '📲 Scan to follow along', hint: 'Your phone shows the same clock as the room.' },
   };
 
   const fmtMins = secs => {
@@ -188,25 +297,74 @@
       items: cb.exercises.map(pick),
     } : null;
 
-    const rounds = (w.style === 'custom' && w.custom && w.custom.rounds) ? w.custom.rounds : 1;
+    const rounds = ((w.style === 'custom') && w.custom && w.custom.rounds) ? w.custom.rounds : 1;
+
+    // Self-paced styles run on one clock for the whole main block, so the
+    // athlete's phone needs the cap and (for climbs) the rung ladder.
+    const paceCfg = (typeof SELF_PACED !== 'undefined' && SELF_PACED[w.style]) || null;
+    const selfPaced = !!SELF_PACED_MODES[mode];
+    const cap = selfPaced ? Math.max(300, Math.round((w.mainDur || 30) * 60)) : 0;
+    const rungs = (Array.isArray(w.rungs) && w.rungs.length) ? w.rungs.slice()
+      : (paceCfg && paceCfg.rungs ? paceCfg.rungs.slice() : (RUNG_FALLBACK[mode] || null));
 
     let meta;
     if (mode === 'h') {
-      meta = items.reduce((sum, i) => sum + (parseInt(i.reps, 10) || 0), 0) + ' total reps';
+      meta = items.reduce((sum, i) => sum + (parseInt(i.reps, 10) || 0), 0) +
+        ' total reps · ' + fmtMins(cap);
     } else if (mode === 'a') {
-      meta = (w.mainDur || 20) + ' min cap';
+      meta = fmtMins(cap) + ' cap';
+    } else if (mode === 'p' || mode === 'l') {
+      meta = (rungs ? rungs.length + ' rungs · ' : '') + fmtMins(cap);
+    } else if (mode === 's') {
+      meta = rounds + (rounds === 1 ? ' round · ' : ' rounds · ') + fmtMins(cap);
     } else if (mode === 'c') {
       meta = rounds + (rounds === 1 ? ' round · ' : ' rounds · ') + items.length + ' moves';
+    } else if (mode === 't') {
+      meta = items.length + ' moves · follows the room clock';
     } else {
       meta = burner.items.length + ' core moves · ' + fmtMins(
         burner.rounds * burner.items.length * (burner.work + burner.rest));
     }
 
+    // Clock-driven styles mirror the room, so the phone gets the step list
+    // and the wall-clock moment step 0 began. The plan already names every
+    // move in order, so the separate item list is dropped to keep the QR
+    // small — renderClockFollow rebuilds the list from the plan.
+    const clockDriven = !selfPaced && mode !== 'b';
+    const plan = clockDriven ? packPlan(currentSequence()) : '';
+
     return {
-      mode, items, meta, rounds, burner,
+      mode, meta, rounds, burner, cap, rungs, plan,
+      items: (clockDriven && plan) ? [] : items,
+      t0: clockDriven ? classStartEpoch() : 0,
       sid: (w.athleteSid || (w.athleteSid = Date.now().toString(36) + Math.random().toString(36).slice(2, 6))),
       title: (w.styleCfg && w.styleCfg.name ? w.styleCfg.name : w.style) + ' · ' + (w.muscle || 'full') + ' focus',
     };
+  }
+
+  // The live sequence when class is running, otherwise the plan as it would
+  // be built — so a code scanned before Go Live still shows the right class.
+  function currentSequence() {
+    try {
+      const live = state.timer && state.timer.sequence;
+      if (live && live.length) return live;
+      return buildTimerSequence();
+    } catch (e) { return []; }
+  }
+
+  // Wall-clock time step 0 started, derived by rewinding through the steps
+  // already completed. Deriving rather than storing absorbs any pauses that
+  // happened before the code was shown. 0 means "not live yet".
+  function classStartEpoch() {
+    try {
+      const t = state.timer;
+      if (!t || !t.sequence || !t.sequence.length) return 0;
+      const i = Math.max(0, Math.min(t.current || 0, t.sequence.length - 1));
+      let elapsed = 0;
+      for (let k = 0; k < i; k++) elapsed += Math.round(t.sequence[k].duration || 0);
+      elapsed += Math.round(t.sequence[i].duration || 0) - Math.max(0, Math.round(t.seconds || 0));
+      return Date.now() - elapsed * 1000;
+    } catch (e) { return 0; }
   }
 
   /* ── Where the QR code points ──────────────────────────────────────────
@@ -246,10 +404,12 @@
 
   // serve.js reports the address phones should use, because a page loaded on
   // http://localhost has no way of discovering the laptop's wifi IP itself.
+  // Only loopback needs this, so a published site never makes the request.
   let phoneOrigin = null;              // null = not asked yet, '' = none available
   function loadPhoneOrigin(done) {
     if (phoneOrigin !== null) { done(phoneOrigin); return; }
-    if (location.protocol === 'file:' || typeof fetch !== 'function') { phoneOrigin = ''; done(''); return; }
+    if (location.protocol === 'file:' || typeof fetch !== 'function' ||
+        !isLoopback(location.hostname)) { phoneOrigin = ''; done(''); return; }
     let settled = false;
     const finish = v => { if (settled) return; settled = true; phoneOrigin = v || ''; done(phoneOrigin); };
     setTimeout(() => finish(''), 1500);
@@ -368,6 +528,14 @@
     loadPhoneOrigin(() => paintClassQR(payload));
   };
 
+  // Keep roughly 3.4px per module so the code stays comfortably scannable as
+  // the payload grows, clamped to what a laptop screen can actually show.
+  function qrPixelSize(url) {
+    const bytes = url.length;
+    const modules = bytes > 1500 ? 149 : bytes > 1100 ? 133 : bytes > 700 ? 109 : bytes > 400 ? 85 : 65;
+    return Math.max(360, Math.min(520, Math.round((modules + 8) * 3.4 / 10) * 10));
+  }
+
   function paintClassQR(payload) {
     const base = athleteBase();
     const url = athleteUrl(payload, base);
@@ -384,7 +552,12 @@
             'any other phone can open. See below.</div>';
     } else {
       try {
-        svg = QR.svg(url, { size: 360, level: 'L', margin: 4 });
+        // A class plan makes the payload much larger, which pushes the code
+        // to a higher version with far more (and therefore smaller) modules.
+        // Phone cameras need roughly 3-4px per module, so the code is grown
+        // to suit rather than left at a fixed size — it is shown on the
+        // instructor's laptop or TV, where there is room for it.
+        svg = QR.svg(url, { size: qrPixelSize(url), level: 'L', margin: 4 });
       } catch (e) {
         svg = '<div class="qr-error">This class is too long to fit in a QR code.<br>' +
               'Share the link below instead.</div>';
@@ -474,6 +647,18 @@
 
   function persist() { saveProgress(cls.sid, me.uid, prog); }
 
+  // 100 Reps used to be a checklist. Anyone who scanned before the update and
+  // is mid-class keeps their progress: each ticked box becomes a full count.
+  function migrateProgress(p) {
+    p = p || {};
+    if (cls.mode !== 'h' || p.reps || !p.done) return p;
+    p.reps = {};
+    cls.items.forEach((it, i) => {
+      if (p.done[i]) p.reps[i] = parseInt(it.reps, 10) || 0;
+    });
+    return p;
+  }
+
   // Put the athlete id in the link so reopening it — from history, a
   // bookmark, or a phone waking back up — lands on the same page.
   function writeUidToUrl(uid) {
@@ -485,7 +670,7 @@
   function identify(uid) {
     if (tickHandle) { clearInterval(tickHandle); tickHandle = null; }
     me = { uid, name: displayName(uid) };
-    prog = loadProgress(cls.sid, uid);
+    prog = migrateProgress(loadProgress(cls.sid, uid));
     writeUidToUrl(uid);
     render();
     requestWake();
@@ -540,10 +725,78 @@
     } catch (e) { /* unsupported, or denied while hidden */ }
   }
 
+  /* ── Self-paced tracking ──────────────────────────────────────────────
+     AMRAP, 100 Reps, Pyramid, Ladder and self-paced Custom all run as one
+     clock covering the whole main block. The athlete owns their pace, so
+     everything they log is a rep counter keyed by exercise — plus the round
+     or rung when the style repeats the list. */
+
+  const repCount = k => { const v = parseInt((prog.reps || {})[k], 10); return v > 0 ? v : 0; };
+  const setRep = (k, v) => {
+    prog.reps = prog.reps || {};
+    prog.reps[k] = Math.max(0, Math.min(999, parseInt(v, 10) || 0));
+  };
+  const sumReps = (keys, targets) =>
+    keys.reduce((s, k, i) => s + Math.min(repCount(k), targets[i] || 0), 0);
+
+  // null when the class has no cap (older links) — the card then counts up.
+  function remainingMs() {
+    if (!prog.startedAt || !cls.cap) return null;
+    return Math.max(0, prog.startedAt + cls.cap * 1000 - Date.now());
+  }
+
+  function clockLine() {
+    if (!prog.startedAt) return '<div class="ath-elapsed muted">Tap start when your class begins.</div>';
+    const rem = remainingMs();
+    if (rem === null) {
+      return '<div class="ath-elapsed">Elapsed <b id="ath-elapsed">' +
+        fmtClock(Date.now() - prog.startedAt) + '</b></div>';
+    }
+    return '<div class="ath-countdown' + (rem === 0 ? ' is-up' : '') + '">' +
+      '<b id="ath-countdown">' + (rem === 0 ? "TIME" : fmtClock(rem)) + '</b>' +
+      '<span class="ath-since" id="ath-countdown-label">' +
+        (rem === 0 ? 'cap reached' : 'left in the block') + '</span></div>';
+  }
+
+  const startBtn = () => prog.startedAt ? ''
+    : '<button class="ath-big-btn start" id="ath-start-btn">▶ Start my clock</button>';
+
+  function progressBar(done, total) {
+    const pct = total ? Math.round(done / total * 100) : 0;
+    return '<div class="ath-bar"><div class="ath-bar-fill" style="width:' + pct + '%"></div></div>';
+  }
+
+  // One editable counter. The number is typeable so an athlete who loses
+  // count can just correct it, and ✓ fills the target in a single tap.
+  function repRow(key, n, name, target, unit) {
+    const count = repCount(key);
+    const done = target > 0 && count >= target;
+    const suffix = unit && unit !== 'reps' ? ' ' + esc(unit) : '';
+    return '<li class="ath-rep-row' + (done ? ' is-done' : '') + '">' +
+      '<span class="ath-rep-name"><b>' + n + '.</b> ' + esc(name) + '</span>' +
+      '<span class="ath-rep-ctl">' +
+        '<button class="ath-step" data-rep-dec="' + key + '" aria-label="One less">−</button>' +
+        '<input class="ath-rep-input" type="number" inputmode="numeric" pattern="[0-9]*" ' +
+               'min="0" max="999" value="' + count + '" data-rep-set="' + key + '" ' +
+               'aria-label="Reps for ' + esc(name) + '">' +
+        (target > 0 ? '<span class="ath-rep-target">/ ' + target + suffix + '</span>' : '') +
+        '<button class="ath-step" data-rep-inc="' + key + '" aria-label="One more">+</button>' +
+        '<button class="ath-rep-fill" data-rep-fill="' + key + '" data-target="' + target + '" ' +
+                'aria-label="' + (done ? 'Clear' : 'Mark all done') + '">' + (done ? '↺' : '✓') + '</button>' +
+      '</span>' +
+    '</li>';
+  }
+
+  const repList = rows => '<ul class="ath-reps-list">' + rows.join('') + '</ul>';
+  const targetOf = it => parseInt(it.reps, 10) || 0;
+
+  // ── AMRAP · rounds of the same list, as many as the cap allows ────────
   function renderAmrap() {
-    const started = !!prog.startedAt;
     const rounds = prog.rounds || [];
-    const last = rounds.length ? rounds[rounds.length - 1].at : prog.startedAt;
+    const n = rounds.length;
+    const perRound = cls.items.reduce((s, i) => s + targetOf(i), 0);
+    const curKeys = cls.items.map((_, i) => 'r' + n + '_' + i);
+    const partial = sumReps(curKeys, cls.items.map(targetOf));
 
     const splits = rounds.map((r, i) => {
       const prev = i === 0 ? prog.startedAt : rounds[i - 1].at;
@@ -559,52 +812,112 @@
     return '' +
       '<div class="ath-card">' +
         '<div class="ath-kicker">🔄 AMRAP · ' + esc(cls.meta) + '</div>' +
-        '<div class="ath-count">' + rounds.length + '</div>' +
-        '<div class="ath-count-label">rounds complete</div>' +
-        (started
-          ? '<div class="ath-elapsed">Elapsed <b id="ath-elapsed">' + fmtClock(Date.now() - prog.startedAt) + '</b>' +
-            '<span class="ath-since">· this round ' + fmtClock(Date.now() - last) + '</span></div>'
-          : '<div class="ath-elapsed muted">Tap start when your class begins.</div>') +
+        '<div class="ath-count-row">' +
+          '<button class="ath-step big" id="ath-rounds-dec" aria-label="One less round">−</button>' +
+          '<input class="ath-count-input" type="number" inputmode="numeric" min="0" max="99" ' +
+                 'value="' + n + '" id="ath-rounds-set" aria-label="Rounds complete">' +
+          '<button class="ath-step big" id="ath-rounds-inc" aria-label="One more round">+</button>' +
+        '</div>' +
+        '<div class="ath-count-label">rounds complete' +
+          (perRound ? ' · ' + (n * perRound + partial) + ' reps total' : '') + '</div>' +
+        clockLine() +
       '</div>' +
-      (started
-        ? '<button class="ath-big-btn" id="ath-round-btn">✓ Finished a round</button>'
-        : '<button class="ath-big-btn start" id="ath-start-btn">▶ Start my clock</button>') +
-      (rounds.length
-        ? '<div class="ath-actions"><button class="ath-mini" id="ath-undo">↩ Undo last round</button></div>' +
-          '<div class="ath-section">Your splits</div><ul class="ath-rounds">' + splits + '</ul>'
-        : '') +
-      '<div class="ath-section">One round</div>' +
-      '<ul class="ath-list">' + cls.items.map(i =>
-        '<li><span class="ath-ex">' + esc(i.name) + '</span>' +
-        '<span class="ath-reps">' + esc(i.reps) + ' ' + esc(i.unit) + '</span></li>').join('') +
-      '</ul>';
+      startBtn() +
+      (prog.startedAt ? '<button class="ath-big-btn" id="ath-round-btn">✓ Finished a round</button>' : '') +
+      '<div class="ath-section">Round ' + (n + 1) + ' — reps so far</div>' +
+      (perRound ? progressBar(partial, perRound) : '') +
+      repList(cls.items.map((it, i) =>
+        repRow(curKeys[i], i + 1, it.name, targetOf(it), it.unit))) +
+      (n ? '<div class="ath-section">Your splits</div><ul class="ath-rounds">' + splits + '</ul>' : '');
   }
 
+  // ── 100 Reps · one pass down the ladder ──────────────────────────────
   function renderHundred() {
-    const done = prog.done || {};
-    const totalReps = cls.items.reduce((s, i) => s + (parseInt(i.reps, 10) || 0), 0);
-    const doneReps = cls.items.reduce((s, i, idx) => s + (done[idx] ? (parseInt(i.reps, 10) || 0) : 0), 0);
-    const pct = totalReps ? Math.round((doneReps / totalReps) * 100) : 0;
-    const doneCount = cls.items.filter((_, idx) => done[idx]).length;
+    const targets = cls.items.map(targetOf);
+    const keys = cls.items.map((_, i) => String(i));
+    const total = targets.reduce((s, t) => s + t, 0);
+    const done = sumReps(keys, targets);
+    const complete = keys.filter((k, i) => targets[i] > 0 && repCount(k) >= targets[i]).length;
 
     return '' +
       '<div class="ath-card">' +
         '<div class="ath-kicker">💯 ' + esc(cls.meta) + '</div>' +
-        '<div class="ath-count">' + doneReps + '</div>' +
-        '<div class="ath-count-label">of ' + totalReps + ' reps done</div>' +
-        '<div class="ath-bar"><div class="ath-bar-fill" style="width:' + pct + '%"></div></div>' +
-        '<div class="ath-elapsed">' + doneCount + ' of ' + cls.items.length + ' exercises complete</div>' +
+        '<div class="ath-count">' + done + '</div>' +
+        '<div class="ath-count-label">of ' + total + ' reps done</div>' +
+        progressBar(done, total) +
+        clockLine() +
       '</div>' +
-      '<div class="ath-section">Tap each one as you finish it</div>' +
-      '<ul class="ath-check">' + cls.items.map((i, idx) =>
-        '<li class="ath-check-row' + (done[idx] ? ' is-done' : '') + '" data-key="' + idx + '">' +
-          '<span class="ath-box">' + (done[idx] ? '✓' : '') + '</span>' +
-          '<span class="ath-ex"><b>' + (idx + 1) + '.</b> ' + esc(i.name) + '</span>' +
-          '<span class="ath-reps">' + esc(i.reps) + ' ' + esc(i.unit) + '</span>' +
-        '</li>').join('') +
-      '</ul>' +
-      (doneCount === cls.items.length && cls.items.length
-        ? '<div class="ath-done-banner">🎉 All ' + totalReps + ' reps done. Great work!</div>' : '');
+      startBtn() +
+      '<div class="ath-section">Your reps — tap ± or type as you go</div>' +
+      repList(cls.items.map((it, i) => repRow(keys[i], i + 1, it.name, targets[i], it.unit))) +
+      (complete === cls.items.length && cls.items.length
+        ? '<div class="ath-done-banner">🎉 All ' + total + ' reps done. Great work!</div>' : '');
+  }
+
+  // ── Pyramid / Ladder · a climb, one rung at a time ───────────────────
+  function renderRungs() {
+    const rungs = (cls.rungs && cls.rungs.length) ? cls.rungs : (RUNG_FALLBACK[cls.mode] || [5, 10, 15, 20]);
+    const per = cls.items.length;
+    const cur = Math.min(Math.max(0, prog.rung || 0), rungs.length - 1);
+    const rungDone = g => cls.items.reduce((s, _, i) => s + Math.min(repCount('g' + g + '_' + i), rungs[g]), 0);
+    const total = rungs.reduce((s, r) => s + r * per, 0);
+    const done = rungs.reduce((s, _, g) => s + rungDone(g), 0);
+
+    const pills = rungs.map((r, g) => {
+      const full = per > 0 && rungDone(g) >= r * per;
+      return '<button class="ath-rung-pill' + (g === cur ? ' is-current' : '') +
+        (full ? ' is-done' : '') + '" data-rung="' + g + '">' + r + '</button>';
+    }).join('<span class="ath-rung-sep">→</span>');
+
+    return '' +
+      '<div class="ath-card">' +
+        '<div class="ath-kicker">' + (cls.mode === 'p' ? '🔺 Pyramid' : '📈 Ladder') + ' · ' + esc(cls.meta) + '</div>' +
+        '<div class="ath-count">' + done + '</div>' +
+        '<div class="ath-count-label">of ' + total + ' reps climbed</div>' +
+        progressBar(done, total) +
+        clockLine() +
+      '</div>' +
+      startBtn() +
+      '<div class="ath-section">Where you\u2019ve climbed to — tap a rung</div>' +
+      '<div class="ath-rungs">' + pills + '</div>' +
+      '<div class="ath-section">Rung ' + (cur + 1) + ' of ' + rungs.length + ' · ' + rungs[cur] + ' reps each</div>' +
+      repList(cls.items.map((it, i) =>
+        repRow('g' + cur + '_' + i, i + 1, it.name, rungs[cur], 'reps'))) +
+      (total && done >= total ? '<div class="ath-done-banner">🎉 Full climb complete!</div>' : '');
+  }
+
+  // ── Custom, self-paced · instructor's rounds, athlete's clock ─────────
+  function renderSelfCustom() {
+    const rounds = Math.max(1, cls.rounds || 1);
+    const targets = cls.items.map(targetOf);
+    const cur = Math.min(Math.max(0, prog.round || 0), rounds - 1);
+    const keysFor = r => cls.items.map((_, i) => 'r' + r + '_' + i);
+    const roundDone = r => sumReps(keysFor(r), targets);
+    const perRound = targets.reduce((s, t) => s + t, 0);
+    const total = perRound * rounds;
+    const done = Array.from({ length: rounds }, (_, r) => roundDone(r)).reduce((s, x) => s + x, 0);
+
+    const pills = rounds > 1 ? Array.from({ length: rounds }, (_, r) => {
+      const full = perRound > 0 && roundDone(r) >= perRound;
+      return '<button class="ath-rung-pill' + (r === cur ? ' is-current' : '') +
+        (full ? ' is-done' : '') + '" data-round-pick="' + r + '">' + (r + 1) + '</button>';
+    }).join('<span class="ath-rung-sep">→</span>') : '';
+
+    return '' +
+      '<div class="ath-card">' +
+        '<div class="ath-kicker">🛠️ ' + esc(cls.title) + ' · ' + esc(cls.meta) + '</div>' +
+        '<div class="ath-count">' + done + '</div>' +
+        '<div class="ath-count-label">of ' + total + ' logged</div>' +
+        progressBar(done, total) +
+        clockLine() +
+      '</div>' +
+      startBtn() +
+      (pills ? '<div class="ath-section">Which round you\u2019re on</div>' +
+               '<div class="ath-rungs">' + pills + '</div>' : '') +
+      '<div class="ath-section">Round ' + (cur + 1) + ' of ' + rounds + '</div>' +
+      repList(cls.items.map((it, i) =>
+        repRow('r' + cur + '_' + i, i + 1, it.name, targets[i], it.unit))) +
+      (total && done >= total ? '<div class="ath-done-banner">🎉 Whole class logged. Great work!</div>' : '');
   }
 
   // ── Custom classes ───────────────────────────────────────────────────
@@ -713,7 +1026,187 @@
         : '');
   }
 
-  const MAIN_RENDER = { a: renderAmrap, h: renderHundred, c: renderCustom, b: renderBurnerOnly };
+  /* ── Mirroring the room's clock ────────────────────────────────────────
+     There is no server, so the phone cannot be pushed the instructor's
+     clock. Instead the link carries the full step list plus the wall time
+     step 0 began, and each phone derives the same position independently.
+     Clocks stay together because they are both reading the same schedule
+     from the same start point. If the instructor pauses or skips, the
+     athlete taps "Re-sync" and picks the move the room is actually on. */
+
+  const PHASE_LABEL = { 'get-ready': 'Get ready', warmup: 'Warm-up', work: 'Work',
+                        rest: 'Rest', cooldown: 'Cool-down' };
+
+  // Pure UI state: the panel should never be open on a fresh load.
+  let resyncOpen = false;
+
+  const planTotal = () => (cls.plan || []).reduce((s, st) => s + st.duration, 0);
+
+  // Seconds into the class right now, including any manual re-sync nudge.
+  function planElapsed() {
+    const base = prog.classStart || cls.t0 || 0;
+    if (!base) return -1;
+    return Math.floor((Date.now() - base) / 1000) - (prog.syncOffset || 0);
+  }
+
+  function planPosition() {
+    const plan = cls.plan || [];
+    const e = planElapsed();
+    if (e < 0) return null;
+    const total = planTotal();
+    if (e >= total) return { done: true, idx: plan.length - 1, left: 0, elapsed: e, total };
+    let idx = 0;
+    for (let i = 0; i < plan.length; i++) {
+      if (e < plan[i].start + plan[i].duration) { idx = i; break; }
+    }
+    const st = plan[idx];
+    return { done: false, idx, step: st, left: st.start + st.duration - e, elapsed: e, total };
+  }
+
+  // The next *different* move. Tabata repeats one exercise for eight rounds,
+  // so "next" must skip past the repeats or it just echoes the current move.
+  function nextWorkStep(from) {
+    const plan = cls.plan || [];
+    const cur = plan[from] ? plan[from].name : '';
+    for (let i = from + 1; i < plan.length; i++) {
+      if (plan[i].name && plan[i].phase !== 'rest' && plan[i].name !== cur) return plan[i];
+    }
+    return null;
+  }
+
+  // One place that decides what the clock card says, so the initial render
+  // and the per-second tick can never disagree.
+  function clockFace(pos) {
+    const st = pos.step;
+    const nx = nextWorkStep(pos.idx);
+    // Rest steps carry no name of their own; what an athlete wants to see
+    // while resting is the move they are about to do.
+    const now = st.name || (nx ? nx.name : '—');
+    const after = st.name ? nx : nextWorkStep(pos.idx + lookaheadFrom(pos.idx));
+    return {
+      phase: PHASE_LABEL[st.phase] || 'Work',
+      time: mmss(pos.left),
+      now,
+      next: st.name
+        ? (nx ? 'Next: ' + nx.name : 'Last one — finish strong')
+        : 'Coming up — get set',
+      pct: Math.max(0, Math.min(100, Math.round(pos.elapsed / pos.total * 100))),
+      totalLeft: mmss(pos.total - pos.elapsed) + ' left in class',
+    };
+  }
+
+  const lookaheadFrom = i => {
+    const plan = cls.plan || [];
+    for (let k = i + 1; k < plan.length; k++) if (plan[k].name) return k - i;
+    return 1;
+  };
+
+  function renderClassClock() {
+    const plan = cls.plan || [];
+    if (!plan.length) return '';
+
+    if (!(prog.classStart || cls.t0)) {
+      return '<div class="ath-card ath-clock ath-clock-idle">' +
+        '<div class="ath-kicker">⏱️ Follow the room</div>' +
+        '<div class="ath-count-label">Your instructor hasn\'t started the clock yet. ' +
+          'Tap below the moment they do and your phone will stay in step.</div>' +
+        '<button class="ath-big-btn start" id="ath-clock-start">▶ Start with the class</button>' +
+      '</div>';
+    }
+
+    const pos = planPosition();
+    if (!pos) return '';
+
+    if (pos.done) {
+      return '<div class="ath-card ath-clock is-done">' +
+        '<div class="ath-kicker">✅ Class complete</div>' +
+        '<div class="ath-clock-time" id="ath-clock-time">Done</div>' +
+        '<div class="ath-clock-now" id="ath-clock-now">Great work.</div>' +
+      '</div>';
+    }
+
+    const f = clockFace(pos);
+    return '<div class="ath-card ath-clock phase-' + pos.step.phase + '" id="ath-clock-card">' +
+      '<div class="ath-clock-phase" id="ath-clock-phase">' + esc(f.phase) + '</div>' +
+      '<div class="ath-clock-time" id="ath-clock-time">' + f.time + '</div>' +
+      '<div class="ath-clock-now" id="ath-clock-now">' + esc(f.now) + '</div>' +
+      '<div class="ath-clock-next" id="ath-clock-next">' + esc(f.next) + '</div>' +
+      '<div class="ath-clock-bar"><span id="ath-clock-fill" style="width:' + f.pct + '%"></span></div>' +
+      '<div class="ath-clock-total" id="ath-clock-total">' + f.totalLeft + '</div>' +
+      '<button class="ath-mini ath-resync" id="ath-resync-btn">⇄ Re-sync to the room</button>' +
+      (resyncOpen ? resyncList(pos) : '') +
+    '</div>';
+  }
+
+  // Tapping the move the room is actually on snaps this phone to the nearest
+  // occurrence of it — nearest, so it works both when the instructor paused
+  // (snap back) and when they skipped ahead (snap forward), and it picks the
+  // right round out of the eight identical rounds in a Tabata.
+  // Only moves near the current position are offered: a full class is 30-odd
+  // moves, which is an unusable list on a phone, and the room is never more
+  // than a few moves away from where this clock thinks it is.
+  const RESYNC_BACK = 4, RESYNC_FWD = 5;
+
+  function resyncList(pos) {
+    const plan = cls.plan || [];
+    const seq = [];
+    plan.forEach(s => {
+      if (s.name && s.phase !== 'rest' && seq[seq.length - 1] !== s.name) seq.push(s.name);
+    });
+    if (!seq.length) return '';
+    const cur = pos.step ? seq.lastIndexOf(pos.step.name) : -1;
+    const at = cur < 0 ? 0 : cur;
+    const from = Math.max(0, at - RESYNC_BACK);
+    const win = seq.slice(from, at + RESYNC_FWD + 1);
+    return '<div class="ath-resync-panel">' +
+      '<div class="ath-resync-hint">Which move is the room on?</div>' +
+      '<div class="ath-resync-opts">' +
+        win.map(n => '<button class="ath-resync-opt' + (n === (pos.step || {}).name ? ' is-current' : '') +
+          '" data-resync="1">' + esc(n) + '</button>').join('') +
+      '</div>' +
+      '<button class="ath-mini ath-resync-cancel" id="ath-resync-cancel">Cancel</button>' +
+    '</div>';
+  }
+
+  function applyResync(name) {
+    const plan = cls.plan || [];
+    const e = planElapsed();
+    let best = null, bestGap = Infinity;
+    plan.forEach(s => {
+      if (s.name !== name || s.phase === 'rest') return;
+      const gap = Math.abs(s.start - e);
+      if (gap < bestGap) { bestGap = gap; best = s; }
+    });
+    if (!best) return;
+    prog.syncOffset = (prog.syncOffset || 0) + (e - best.start);
+    resyncOpen = false;
+    persist(); render();
+    if (navigator.vibrate) navigator.vibrate(30);
+  }
+
+  // A class on the clock: the phone is a repeater for the room, plus the
+  // full list so nobody has to squint at the screen across the gym. The
+  // list is rebuilt from the plan, which already names every move in order.
+  // Core Burner moves are left out — they get their own section below.
+  function renderClockFollow() {
+    const burnerNames = {};
+    ((cls.burner && cls.burner.items) || []).forEach(i => { burnerNames[i.name] = 1; });
+    const seen = [];
+    (cls.plan || []).forEach(s => {
+      if (s.phase === 'work' && s.name && !burnerNames[s.name] && seen.indexOf(s.name) < 0) seen.push(s.name);
+    });
+    const list = seen.length ? seen.map(n => ({ name: n, reps: '', unit: '' })) : cls.items;
+    if (!list.length) return '';
+    return '<div class="ath-section">Today\'s main workout</div>' +
+      '<ul class="ath-list">' + list.map((i, n) =>
+        '<li><span class="ath-ex">' + (n + 1) + '. ' + esc(i.name) + '</span>' +
+        (i.reps ? '<span class="ath-reps">' + esc(i.reps) + ' ' + esc(i.unit) + '</span>' : '') +
+        '</li>').join('') + '</ul>';
+  }
+
+  const MAIN_RENDER = { a: renderAmrap, h: renderHundred, p: renderRungs, l: renderRungs,
+                        s: renderSelfCustom, c: renderCustom, b: renderBurnerOnly,
+                        t: renderClockFollow };
 
   function render() {
     const root = document.getElementById('athlete-root');
@@ -731,6 +1224,7 @@
         '</button>' +
         '<button class="ath-reset" id="ath-reset" title="Clear my progress">Reset</button>' +
       '</div>' +
+      renderClassClock() +
       main() +
       renderBurner() +
       '<div class="ath-foot">Private to ' + esc(me.name) + ' on this phone · saved automatically</div>';
@@ -741,7 +1235,13 @@
   function bind() {
     const on = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
 
-    on('ath-start-btn', () => { prog.startedAt = Date.now(); prog.rounds = []; persist(); requestWake(); render(); });
+    on('ath-start-btn', () => { prog.startedAt = Date.now(); persist(); requestWake(); render(); });
+    on('ath-clock-start', () => { prog.classStart = Date.now(); prog.syncOffset = 0; persist(); requestWake(); render(); });
+    on('ath-resync-btn', () => { resyncOpen = !resyncOpen; render(); });
+    on('ath-resync-cancel', () => { resyncOpen = false; render(); });
+    document.querySelectorAll('[data-resync]').forEach(b => b.addEventListener('click', () => {
+      applyResync(b.textContent);
+    }));
     on('ath-round-btn', () => {
       prog.rounds = prog.rounds || [];
       prog.rounds.push({ at: Date.now(), note: '' });
@@ -751,6 +1251,8 @@
     on('ath-undo', () => {
       if (prog.rounds && prog.rounds.length) { prog.rounds.pop(); persist(); render(); }
     });
+    on('ath-rounds-inc', () => { setRoundCount((prog.rounds || []).length + 1); render(); });
+    on('ath-rounds-dec', () => { setRoundCount((prog.rounds || []).length - 1); render(); });
     on('ath-id', () => renderGate(true));
     on('ath-reset', () => {
       if (confirm('Clear ' + me.name + '\u2019s progress for this class? ' +
@@ -765,6 +1267,48 @@
         persist(); render();
       });
     });
+
+    // Rung / round pickers — "where I've climbed to".
+    document.querySelectorAll('[data-rung]').forEach(pill => {
+      pill.addEventListener('click', () => {
+        prog.rung = parseInt(pill.dataset.rung, 10) || 0;
+        persist(); render();
+      });
+    });
+    document.querySelectorAll('[data-round-pick]').forEach(pill => {
+      pill.addEventListener('click', () => {
+        prog.round = parseInt(pill.dataset.roundPick, 10) || 0;
+        persist(); render();
+      });
+    });
+
+    // Rep counters. ± and ✓ re-render (they change totals and the rung state);
+    // typing only saves, so the keyboard and caret are never yanked away.
+    const bump = (k, d) => { setRep(k, repCount(k) + d); afterRepChange(); render();
+      if (navigator.vibrate) navigator.vibrate(15); };
+    document.querySelectorAll('[data-rep-inc]').forEach(b =>
+      b.addEventListener('click', () => bump(b.dataset.repInc, 1)));
+    document.querySelectorAll('[data-rep-dec]').forEach(b =>
+      b.addEventListener('click', () => bump(b.dataset.repDec, -1)));
+    document.querySelectorAll('[data-rep-fill]').forEach(b =>
+      b.addEventListener('click', () => {
+        const k = b.dataset.repFill, t = parseInt(b.dataset.target, 10) || 0;
+        setRep(k, repCount(k) >= t ? 0 : t);
+        afterRepChange(); render();
+        if (navigator.vibrate) navigator.vibrate(25);
+      }));
+    document.querySelectorAll('[data-rep-set]').forEach(inp => {
+      inp.addEventListener('input', () => { setRep(inp.dataset.repSet, inp.value); persist(); });
+      inp.addEventListener('change', () => { setRep(inp.dataset.repSet, inp.value); afterRepChange(); render(); });
+      inp.addEventListener('click', e => e.stopPropagation());
+    });
+    const roundsInput = document.getElementById('ath-rounds-set');
+    if (roundsInput) {
+      roundsInput.addEventListener('change', () => {
+        setRoundCount(parseInt(roundsInput.value, 10) || 0); render();
+      });
+      roundsInput.addEventListener('click', e => e.stopPropagation());
+    }
 
     document.querySelectorAll('.ath-check-row').forEach(row => {
       row.addEventListener('click', () => {
@@ -787,6 +1331,47 @@
     });
   }
 
+  // Editing the round count by hand keeps the split log honest: new rounds are
+  // stamped now and marked estimated, and trimming drops the most recent.
+  function setRoundCount(n) {
+    n = Math.max(0, Math.min(99, parseInt(n, 10) || 0));
+    prog.rounds = prog.rounds || [];
+    if (!n) { prog.rounds = []; }
+    while (prog.rounds.length < n) prog.rounds.push({ at: Date.now(), note: '', est: true });
+    while (prog.rounds.length > n) prog.rounds.pop();
+    if (n && !prog.startedAt) prog.startedAt = Date.now();
+    persist();
+  }
+
+  // Filling a rung or round moves the athlete on, so they are not left
+  // tapping a finished list.
+  function afterRepChange() {
+    const targetOf2 = it => parseInt(it.reps, 10) || 0;
+    if (cls.mode === 'p' || cls.mode === 'l') {
+      const rungs = (cls.rungs && cls.rungs.length) ? cls.rungs : (RUNG_FALLBACK[cls.mode] || []);
+      const g = Math.min(Math.max(0, prog.rung || 0), rungs.length - 1);
+      if (g + 1 < rungs.length && cls.items.length &&
+          cls.items.every((_, i) => repCount('g' + g + '_' + i) >= rungs[g])) {
+        prog.rung = g + 1;
+      }
+    } else if (cls.mode === 's') {
+      const rounds = Math.max(1, cls.rounds || 1);
+      const r = Math.min(Math.max(0, prog.round || 0), rounds - 1);
+      if (r + 1 < rounds && cls.items.length &&
+          cls.items.every((it, i) => repCount('r' + r + '_' + i) >= targetOf2(it))) {
+        prog.round = r + 1;
+      }
+    } else if (cls.mode === 'a') {
+      const n = (prog.rounds || []).length;
+      if (cls.items.length && cls.items.every((it, i) => targetOf2(it) > 0 &&
+          repCount('r' + n + '_' + i) >= targetOf2(it))) {
+        prog.rounds = prog.rounds || [];
+        prog.rounds.push({ at: Date.now(), note: '' });
+      }
+    }
+    persist();
+  }
+
   // Finishing the last move of a custom round moves the athlete on, so they
   // are not left tapping a completed list. Ticking a burner move never does.
   function advanceRound(k) {
@@ -800,20 +1385,68 @@
     if (complete) prog.round = r + 1;
   }
 
-  // Only the elapsed line ticks, so typing in a note is never interrupted.
+  // Updates the clock card in place. Re-rendering every second would reset
+  // the athlete's scroll position and close the re-sync panel mid-tap.
+  let lastClockIdx = -1;
+  function tickClassClock() {
+    const timeEl = document.getElementById('ath-clock-time');
+    if (!timeEl) return;
+    const pos = planPosition();
+    if (!pos) return;
+
+    if (pos.done) {
+      if (lastClockIdx !== -2) { lastClockIdx = -2; render(); }
+      return;
+    }
+
+    const f = clockFace(pos);
+    timeEl.textContent = f.time;
+    const totalEl = document.getElementById('ath-clock-total');
+    if (totalEl) totalEl.textContent = f.totalLeft;
+    const fill = document.getElementById('ath-clock-fill');
+    if (fill) fill.style.width = f.pct + '%';
+
+    if (pos.idx !== lastClockIdx) {
+      lastClockIdx = pos.idx;
+      const ph = document.getElementById('ath-clock-phase');
+      if (ph) ph.textContent = f.phase;
+      const now = document.getElementById('ath-clock-now');
+      if (now) now.textContent = f.now;
+      const next = document.getElementById('ath-clock-next');
+      if (next) next.textContent = f.next;
+      const card = document.getElementById('ath-clock-card');
+      if (card) card.className = 'ath-card ath-clock phase-' + pos.step.phase;
+      if (pos.step.phase === 'work' && navigator.vibrate) navigator.vibrate(40);
+    }
+  }
+
+  // Only the clock line ticks, so typing a rep count is never interrupted.
   function scheduleTick() {
     if (tickHandle) clearInterval(tickHandle);
-    if (cls.mode !== 'a' || !prog.startedAt) return;
+    const mirrors = (cls.plan || []).length && (prog.classStart || cls.t0);
+    if (!mirrors && (!SELF_PACED_MODES[cls.mode] || !prog.startedAt)) return;
     tickHandle = setInterval(() => {
+      if (mirrors) tickClassClock();
+      const cd = document.getElementById('ath-countdown');
+      if (cd) {
+        const rem = remainingMs();
+        if (rem === null) return;
+        cd.textContent = rem === 0 ? 'TIME' : fmtClock(rem);
+        if (rem === 0) {
+          const wrap = cd.parentNode;
+          if (wrap && !wrap.classList.contains('is-up')) {
+            wrap.classList.add('is-up');
+            const lbl = document.getElementById('ath-countdown-label');
+            if (lbl) lbl.textContent = 'cap reached';
+            if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
+          }
+          clearInterval(tickHandle); tickHandle = null;
+        }
+        return;
+      }
       const el = document.getElementById('ath-elapsed');
       if (!el) return;
       el.textContent = fmtClock(Date.now() - prog.startedAt);
-      const since = el.parentNode.querySelector('.ath-since');
-      if (since) {
-        const rounds = prog.rounds || [];
-        const last = rounds.length ? rounds[rounds.length - 1].at : prog.startedAt;
-        since.textContent = '· this round ' + fmtClock(Date.now() - last);
-      }
     }, 1000);
   }
 

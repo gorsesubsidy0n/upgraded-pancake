@@ -23,7 +23,7 @@ function saveProfileIcon(id, icon) {
 
 const _savedIcons = loadProfileIcons();
 const PROFILES = {
-  kat:     { id:'kat',     name:'Kat',     icon: _savedIcons.kat     || '🌸', color:'pink'   },
+  kat:     { id:'kat',     name:'Kat',     icon: _savedIcons.kat     || '🌠', color:'pink'   },
   carson:  { id:'carson',  name:'Carson',  icon: _savedIcons.carson  || '⚡', color:'yellow' },
   melissa: { id:'melissa', name:'Melissa', icon: _savedIcons.melissa || '🔥', color:'orange' },
 };

@@ -118,8 +118,49 @@ brings back exactly where they were.
 Two people sharing a tablet can hand off with the **⇄** button next to the
 name, without losing the first person's progress.
 
-Scan-to-track is available for **AMRAP**, **100 Reps**, **Custom**, and
-**Core Burner** classes.
+Scan-to-track now works for **every class style**, not just the self-paced
+ones. What the phone shows depends on how the class is run:
+
+- **Self-paced styles** (AMRAP, 100 Reps, Pyramid, Ladder, Custom) — the
+  phone is a tally. Athletes tap to count their own rounds and reps.
+- **Clock-driven styles** (Tabata, Circuit, EMOM, Superset, You-Go-I-Go) —
+  the phone becomes a repeater for the room clock.
+
+### The class clock on their phone
+
+For clock-driven styles the phone shows the same countdown as the screen at
+the front: the current interval, whether it's work or rest, the move they're
+on, what's coming next, and how much of the class is left. During a rest it
+shows the move they're about to start, so nobody is caught out.
+
+There is no server involved. The QR link carries the whole class schedule
+plus the moment the class started, and each phone works out its own position
+from that. Phones stay in step because they're all reading the same plan.
+
+One consequence: **if you pause the room clock, phones keep running.** That's
+what the **⇄ Re-sync to the room** button is for. An athlete taps it, picks
+the move the room is actually on, and their phone snaps to it. It works both
+directions — after a pause or after you skip ahead — and it picks the right
+round when a move repeats.
+
+If you show the code *before* tapping Go Live, athletes get a **▶ Start with
+the class** button instead. They tap it when you start.
+
+---
+
+## Pyramid and Ladder — choosing the climb
+
+Pick **Pyramid** or **Ladder** and the plan card shows a rep-climb editor.
+
+Four presets each are one tap away, or type your own in the box — for
+example `4-8-12-16-12-8-4` or `10-20-30-40`. Spaces or dashes both work.
+
+Whatever you set flows everywhere: the rep label on each exercise, the
+climb shown on the class timer, the projected plan, and the rungs on every
+athlete's phone. Pyramids mirror back down automatically if you type one
+that way; the app doesn't force symmetry.
+
+Changing style resets the climb to that style's default.
 
 ---
 

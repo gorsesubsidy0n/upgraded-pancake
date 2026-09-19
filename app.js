@@ -23,6 +23,111 @@ const state = {
 // Styles that can be randomly selected (excludes 'random' itself)
 const STYLE_KEYS = ['tabata','amrap','emom','circuit','ladder','pyramid','hundred','superset','ygig'];
 
+// ─── SELF-PACED STYLES ────────────────────────────────────────
+// Four styles are paced by the athlete, not by the clock. Each runs as a
+// single time-capped block covering the whole main workout, and the athlete
+// tracks their own reps, rounds or rung on their phone. Giving every set its
+// own slot both overran the class and stopped people working at their speed.
+const PYRAMID_RUNGS = [5,10,15,20,15,10,5];
+const LADDER_RUNGS  = [5,10,15,20];
+const rungText = r => r.join(' → ');
+
+// Instructors shape their own climb. Presets cover the common ones; anything
+// else can be typed in as "4-8-12-16-12-8-4".
+const RUNG_PRESETS = {
+  pyramid: [
+    { label:'5-10-15-20-15-10-5', rungs:[5,10,15,20,15,10,5] },
+    { label:'4-8-12-16-12-8-4',   rungs:[4,8,12,16,12,8,4] },
+    { label:'10-20-30-20-10',     rungs:[10,20,30,20,10] },
+    { label:'5-10-15-10-5',       rungs:[5,10,15,10,5] },
+  ],
+  ladder: [
+    { label:'5-10-15-20',    rungs:[5,10,15,20] },
+    { label:'10-20-30-40',   rungs:[10,20,30,40] },
+    { label:'4-8-12-16',     rungs:[4,8,12,16] },
+    { label:'20-15-10-5',    rungs:[20,15,10,5] },
+  ],
+};
+
+// The instructor's edit wins; otherwise the style's default climb is used.
+function classRungs(w) {
+  w = w || state.workout;
+  const cfg = w && SELF_PACED[w.style];
+  if (!cfg || !cfg.rungs) return null;
+  return (Array.isArray(w.rungs) && w.rungs.length) ? w.rungs : cfg.rungs.slice();
+}
+
+function parseRungs(text) {
+  return String(text || '').split(/[^0-9]+/).filter(Boolean)
+    .map(n => parseInt(n, 10)).filter(n => n > 0 && n <= 200).slice(0, 12);
+}
+
+function makeRungEditor(style, rungs) {
+  const presets = (RUNG_PRESETS[style] || []).map(p => {
+    const active = p.rungs.length === rungs.length && p.rungs.every((n, i) => n === rungs[i]);
+    return '<button class="rung-preset'+(active?' active':'')+'" onclick="setClassRungs(\''+p.rungs.join('-')+'\')">'+
+      p.label+'</button>';
+  }).join('');
+  const total = rungs.reduce((s, n) => s + n, 0);
+  return '<div class="rung-editor">'+
+    '<div class="rung-current">Climb: <b>'+rungText(rungs)+'</b>'+
+      '<span class="rung-total">'+rungs.length+' rungs · '+total+' reps per exercise</span></div>'+
+    '<div class="rung-presets">'+presets+'</div>'+
+    '<div class="rung-custom">'+
+      '<input type="text" id="rung-input" value="'+rungs.join('-')+'" placeholder="e.g. 4-8-12-16-12-8-4" '+
+        'onkeydown="if(event.key===\'Enter\')setClassRungs(this.value)">'+
+      '<button class="rung-apply" onclick="setClassRungs(document.getElementById(\'rung-input\').value)">Apply</button>'+
+    '</div></div>';
+}
+
+// Short label for a rung style, e.g. "4→16→4" for a pyramid or "10→40" for a ladder.
+// Always reflects the instructor's current climb rather than the style default.
+function rungRepsLabel(style, w) {
+  w = w || (typeof state !== 'undefined' ? state.workout : null) || {};
+  const def = SELF_PACED[style] && SELF_PACED[style].rungs;
+  const r = (w.style === style && Array.isArray(w.rungs) && w.rungs.length) ? w.rungs : def;
+  if (!r || !r.length) return '';
+  if (r.length === 1) return String(r[0]);
+  const peak = Math.max.apply(null, r), last = r[r.length - 1];
+  return (r[0] !== peak && last !== peak)
+    ? r[0] + '→' + peak + '→' + last
+    : r[0] + '→' + last;
+}
+
+function setClassRungs(text) {
+  const nums = parseRungs(text);
+  if (!nums.length) { showToast('Enter rep counts like 4-8-12-16'); return; }
+  state.workout.rungs = nums;
+  const label = rungRepsLabel(state.workout.style, state.workout);
+  (state.workout.exercises || []).forEach(ex => { ex.reps = label; ex.unit = 'reps'; });
+  renderPlanEditor();
+  showToast('Climb set to ' + nums.join(' → '));
+}
+
+const SELF_PACED = {
+  hundred: {
+    icon:'💯', ready:'100 REPS CHALLENGE', label:'100 REPS — YOUR OWN PACE',
+    note:'Work the ladder in any order', rungs:null,
+    reps:(ex,i)=>parseInt(ex.reps,10)||((i+1)*10),
+    headline:l=>l.reduce((s,x)=>s+x.reps,0)+' reps across '+l.length+' exercises',
+  },
+  amrap: {
+    icon:'🔄', ready:'AMRAP', label:'AMRAP — AS MANY ROUNDS AS POSSIBLE',
+    note:'Repeat the full list — count your rounds', rungs:null,
+    headline:l=>l.length+' exercises · as many rounds as you can',
+  },
+  pyramid: {
+    icon:'🔺', ready:'PYRAMID', label:'PYRAMID — CLIMB AT YOUR OWN PACE',
+    note:'Every exercise at each rung, up then back down', rungs:PYRAMID_RUNGS,
+    headline:(l,r)=>l.length+' exercises · '+r.length+' rungs · '+rungText(r),
+  },
+  ladder: {
+    icon:'📈', ready:'LADDER', label:'LADDER — CLIMB AT YOUR OWN PACE',
+    note:'Every exercise at each rung', rungs:LADDER_RUNGS,
+    headline:(l,r)=>l.length+' exercises · '+r.length+' rungs · '+rungText(r),
+  },
+};
+
 const STYLES = {
   tabata:   { name:'Tabata',   icon:'🔥', desc:'20s max effort / 10s rest x 8 rounds per exercise.' },
   amrap:    { name:'AMRAP',    icon:'🔄', desc:'As Many Rounds As Possible within the time cap.' },
@@ -40,7 +145,7 @@ const STYLES = {
 // Custom classes are instructor-authored: the generator only seeds a starting
 // plan, then every timing value is editable. Per-exercise settings live on the
 // exercise as cMode/cWork/cRest/cReps; class-wide settings live on w.custom.
-const CUSTOM_DEFAULTS = { rounds:3, roundRest:60, work:40, rest:20, mode:'time' };
+const CUSTOM_DEFAULTS = { rounds:3, roundRest:60, work:40, rest:20, mode:'time', pace:'clock' };
 
 function customCfg(w) {
   w = w || state.workout;
@@ -85,6 +190,24 @@ function initCustomEx(ex, cfg, diff) {
 // estimate both read it, so the clock can never disagree with the plan.
 function buildCustomMainSeq(w) {
   const cfg = customCfg(w), out = [];
+  // Self-paced: one clock for the whole block, athletes track their own reps.
+  if (cfg.pace === 'self') {
+    const capSec = Math.max(300, Math.round((w.mainDur || 30) * 60));
+    const rounds = Math.max(1, clampNum(cfg.rounds, 1, 20, 3));
+    const ladder = (w.exercises || []).map((ex, i) => ({
+      n:i+1, name:ex.name, prop:ex.propLabel || '',
+      reps: ex.cMode === 'reps' ? clampNum(ex.cReps, 1, 200, 10) : clampNum(ex.cWork, 5, 600, cfg.work),
+      unit: ex.cMode === 'reps' ? 'reps' : 'sec',
+    }));
+    const headline = ladder.length + ' exercises · ' +
+      (rounds > 1 ? rounds + ' rounds at your own pace' : 'work at your own pace');
+    out.push({ phase:'get-ready', label:'CUSTOM — YOUR OWN PACE', name:headline, prop:'', duration:5 });
+    out.push({ phase:'work', label:'WORK — YOUR OWN PACE', name:headline, prop:'', duration:capSec,
+      round:1, totalRounds:1, _exIdx:0, _ladder:ladder, _rungs:null,
+      _paceNote: rounds > 1 ? 'Repeat the list ' + rounds + ' times' : 'Work through the list', _pace:'custom' });
+    out.push({ phase:'get-ready', label:'🛠️ TIME!', name:headline, prop:'', duration:5 });
+    return out;
+  }
   const rounds = Math.max(1, clampNum(cfg.rounds, 1, 20, 3));
   for (let r = 0; r < rounds; r++) {
     if (rounds > 1) out.push({ phase:'get-ready', label:'ROUND '+(r+1)+' OF '+rounds, name:'Round Starting', prop:'', duration:5 });
@@ -949,8 +1072,8 @@ function generateWorkout(opts) {
     switch(resolvedStyle){
       case 'tabata':   reps='20s';    unit='work'; seconds=20; break;
       case 'circuit':  reps='45s';    unit='work'; seconds=45; break;
-      case 'ladder':   reps='5→20';   unit='reps'; seconds=30; break;
-      case 'pyramid':  reps='5→20→5'; unit='reps'; seconds=30; break;
+      case 'ladder':   reps=rungRepsLabel('ladder');  unit='reps'; seconds=30; break;
+      case 'pyramid':  reps=rungRepsLabel('pyramid'); unit='reps'; seconds=30; break;
       case 'hundred':  reps=((hundredIdx||0)+1)*10+''; unit='reps'; seconds=Math.max(30,((hundredIdx||0)+1)*8); break;
       case 'ygig':     reps=randInt(range[0],range[1]); unit='reps'; seconds=state.ygigWorkSec||45; break;
       case 'custom':   reps=null; unit=null; seconds=null; break;
@@ -1021,27 +1144,44 @@ function renderPlanEditor() {
   }
 
   if (style==='emom') {
-    const exPerMin = exercises.length <= 6 ? 2 : 3;
-    const workPerEx = Math.floor(40 / exPerMin);
+    const p = emomPlan(state.workout);
     const banner=document.createElement('div'); banner.className='style-info-banner';
     // Call out anything the class has to queue for.
     const limitedInPlan = exercises.filter(ex => propCapacity(ex.prop) !== Infinity);
     const limitedNote = limitedInPlan.length>0 && state.participants>1
       ? ' <b>Note:</b> '+limitedInPlan.map(e=>e.propLabel).join(', ')+' — shared prop, use as a station.'
       : '';
-    banner.innerHTML='<span class="sib-icon">⏱️</span><span><b>EMOM:</b> '+exercises.length+' exercises grouped '+exPerMin+' per minute. Each exercise gets ~'+workPerEx+'s of work, then 20s rest. '+Math.ceil(exercises.length/exPerMin)+' total minutes.'+limitedNote+'</span>';
+    const cycles = p.groups.length ? Math.round(p.totalMins/p.groups.length*10)/10 : 0;
+    banner.innerHTML='<span class="sib-icon">⏱️</span><span><b>EMOM:</b> '+exercises.length+' exercises grouped '+p.exPerMin+' per minute. Each exercise gets ~'+p.workPerEx+'s of work, then 20s rest. <b>'+p.totalMins+' minutes</b> — the list cycles '+cycles+'× to fill the block.'+limitedNote+'</span>';
     container.appendChild(banner);
   }
   if (style==='ygig') {
+    const yp = ygigPlan(state.workout);
     const banner=document.createElement('div'); banner.className='style-info-banner ygig-banner';
     const ygigSec = state.workout.ygigWorkSec || state.ygigWorkSec || 45;
-    banner.innerHTML='<span class="sib-icon">🤝</span><div class="ygig-banner-content"><div><b>You-Go-I-Go:</b> Person A does reps while Person B holds active rest. Switch when done.</div><div class="ygig-time-control"><span class="ygig-time-label">⏱ Time per person:</span><div class="ygig-time-btns"><button class="ygig-time-btn '+(ygigSec===20?'active':'')+'" data-sec="20" onclick="selectYgigTime(this)">20s</button><button class="ygig-time-btn '+(ygigSec===30?'active':'')+'" data-sec="30" onclick="selectYgigTime(this)">30s</button><button class="ygig-time-btn '+(ygigSec===45?'active':'')+'" data-sec="45" onclick="selectYgigTime(this)">45s</button><button class="ygig-time-btn '+(ygigSec===60?'active':'')+'" data-sec="60" onclick="selectYgigTime(this)">60s</button><button class="ygig-time-btn '+(ygigSec===90?'active':'')+'" data-sec="90" onclick="selectYgigTime(this)">90s</button></div><input type="number" class="ygig-time-custom" min="15" max="120" value="'+ygigSec+'" onchange="setCustomYgigTime(this.value)" placeholder="sec"/></div></div>';
+    const roundNote = yp.rounds>1 ? ' <b>'+yp.rounds+' rounds</b> through '+yp.pairs.length+' pairs.' : '';
+    banner.innerHTML='<span class="sib-icon">🤝</span><div class="ygig-banner-content"><div><b>You-Go-I-Go:</b> Person A does reps while Person B holds active rest. Switch when done.'+roundNote+'</div><div class="ygig-time-control"><span class="ygig-time-label">⏱ Time per person:</span><div class="ygig-time-btns"><button class="ygig-time-btn '+(ygigSec===20?'active':'')+'" data-sec="20" onclick="selectYgigTime(this)">20s</button><button class="ygig-time-btn '+(ygigSec===30?'active':'')+'" data-sec="30" onclick="selectYgigTime(this)">30s</button><button class="ygig-time-btn '+(ygigSec===45?'active':'')+'" data-sec="45" onclick="selectYgigTime(this)">45s</button><button class="ygig-time-btn '+(ygigSec===60?'active':'')+'" data-sec="60" onclick="selectYgigTime(this)">60s</button><button class="ygig-time-btn '+(ygigSec===90?'active':'')+'" data-sec="90" onclick="selectYgigTime(this)">90s</button></div><input type="number" class="ygig-time-custom" min="15" max="120" value="'+ygigSec+'" onchange="setCustomYgigTime(this.value)" placeholder="sec"/></div></div>';
     container.appendChild(banner);
   }
-  if (style==='pyramid'||style==='hundred') {
+  if (SELF_PACED[style]) {
     const banner=document.createElement('div'); banner.className='style-info-banner';
-    if (style==='pyramid') banner.innerHTML='<span class="sib-icon">🔺</span><span>Pyramid: 5 → 10 → 15 → 20 → 15 → 10 → 5 reps. Rest 15s between sets.</span>';
-    else banner.innerHTML='<span class="sib-icon">💯</span><span><b>100 Reps Challenge:</b> Each exercise gets progressively more reps — 10, 20, 30, 40, 50, 60, 70, 80, 90, 100. Total = 550 reps. Rest scales with rep count.</span>';
+    const cfg=SELF_PACED[style];
+    const rungs=classRungs();
+    const mins=Math.max(5,Math.round(state.workout.mainDur||30));
+    const detail = style==='hundred'
+      ? '<b>100 Reps Challenge:</b> Each exercise gets progressively more reps — 10, 20, 30 … up to 100. Total = 550 reps.'
+      : style==='amrap'
+        ? '<b>AMRAP:</b> Repeat the full list as many times as you can.'
+        : '<b>'+STYLES[style].name+':</b> Every exercise at each rung.';
+    const blurb='<span class="sib-icon">'+cfg.icon+'</span><span>'+detail+
+      ' One '+mins+'-minute clock for the whole block — athletes work at their own pace '+
+      'and track reps on their phone.</span>';
+    if (rungs) {
+      banner.classList.add('rung-banner');
+      banner.innerHTML='<div class="sib-row">'+blurb+'</div>'+makeRungEditor(style,rungs);
+    } else {
+      banner.innerHTML=blurb;
+    }
     container.appendChild(banner);
   }
 
@@ -1175,20 +1315,29 @@ function makeCustomPanel(){
   const cfg=customCfg(), w=state.workout;
   const div=document.createElement('div'); div.className='custom-panel';
   const modeBtn=(v,l)=>'<button class="cp-mode-btn'+(cfg.mode===v?' active':'')+'" onclick="setCustomCfg(\'mode\',\''+v+'\')">'+l+'</button>';
+  const paceBtn=(v,l,d)=>'<button class="cp-pace-btn'+(cfg.pace===v?' active':'')+'" onclick="setCustomCfg(\'pace\',\''+v+'\')">'+
+    '<b>'+l+'</b><span>'+d+'</span></button>';
+  const selfPaced=cfg.pace==='self';
   div.innerHTML=
     '<div class="cp-head"><span class="sib-icon">🛠️</span><div>'+
       '<b>Custom class</b> — this plan is yours to shape. Reorder, swap or remove anything, '+
       'use <b>+ Add</b> for your own movements, and set the timing per exercise below.'+
     '</div></div>'+
+    '<div class="cp-pace-row">'+
+      paceBtn('clock','⏱ On the clock','Everyone moves together on your work/rest intervals.')+
+      paceBtn('self','🏃 Self-paced','One clock for the whole block. Athletes track their own reps on their phone.')+
+    '</div>'+
     '<div class="cp-grid">'+
       '<label class="cp-field"><span>Rounds</span>'+
         '<input type="number" min="1" max="20" value="'+cfg.rounds+'" onchange="setCustomCfg(\'rounds\',this.value)"></label>'+
+      (selfPaced?'':
       '<label class="cp-field"><span>Rest between rounds</span>'+
-        '<input type="number" min="0" max="600" step="5" value="'+cfg.roundRest+'" onchange="setCustomCfg(\'roundRest\',this.value)"></label>'+
-      '<label class="cp-field"><span>Default work</span>'+
+        '<input type="number" min="0" max="600" step="5" value="'+cfg.roundRest+'" onchange="setCustomCfg(\'roundRest\',this.value)"></label>')+
+      '<label class="cp-field"><span>Default '+(selfPaced?'target':'work')+'</span>'+
         '<input type="number" min="5" max="600" step="5" value="'+cfg.work+'" onchange="setCustomCfg(\'work\',this.value)"></label>'+
+      (selfPaced?'':
       '<label class="cp-field"><span>Default rest</span>'+
-        '<input type="number" min="0" max="300" step="5" value="'+cfg.rest+'" onchange="setCustomCfg(\'rest\',this.value)"></label>'+
+        '<input type="number" min="0" max="300" step="5" value="'+cfg.rest+'" onchange="setCustomCfg(\'rest\',this.value)"></label>')+
       '<div class="cp-field"><span>New exercises use</span>'+
         '<div class="cp-mode-row">'+modeBtn('time','⏱ Time')+modeBtn('reps','🔢 Reps')+'</div></div>'+
     '</div>'+
@@ -1209,6 +1358,7 @@ function refreshCustomTotals(){
 function setCustomCfg(field,val){
   const cfg=customCfg();
   if(field==='mode') { cfg.mode = val==='reps'?'reps':'time'; renderPlanEditor(); return; }
+  if(field==='pace') { cfg.pace = val==='self'?'self':'clock'; renderPlanEditor(); return; }
   const lim={rounds:[1,20,3],roundRest:[0,600,60],work:[5,600,40],rest:[0,300,20]}[field];
   if(!lim) return;
   cfg[field]=clampNum(val,lim[0],lim[1],lim[2]);
@@ -1386,8 +1536,8 @@ function swapExercise(idx,opts){
   switch(wStyle){
     case 'tabata':  reps='20s';    unit='work'; seconds=20; break;
     case 'circuit': reps='45s';    unit='work'; seconds=45; break;
-    case 'ladder':  reps='5→20';   unit='reps'; seconds=30; break;
-    case 'pyramid': reps='5→20→5'; unit='reps'; seconds=30; break;
+    case 'ladder':  reps=rungRepsLabel('ladder');  unit='reps'; seconds=30; break;
+    case 'pyramid': reps=rungRepsLabel('pyramid'); unit='reps'; seconds=30; break;
     case 'hundred': reps=((idx+1)*10)+''; unit='reps'; seconds=Math.max(30,(idx+1)*8); break;
     case 'ygig':    reps=randInt(range[0],range[1]); unit='reps'; seconds=state.workout.ygigWorkSec||45; break;
     case 'custom':  reps=null; unit=null; seconds=null; break;
@@ -1499,6 +1649,42 @@ function loadSavedWorkout(id){const sw=state.savedWorkouts.find(s=>s.id===id);if
 function deleteSavedWorkout(id){state.savedWorkouts=state.savedWorkouts.filter(s=>s.id!==id);saveToStorage();showHistory();}
 
 // ─── TIMER SEQUENCE ───────────────────────────────────────────
+
+// EMOM and You-Go-I-Go used to make a single pass through the exercise list,
+// so a 45 minute class only ever built about 16 minutes of work. Both now
+// cycle the list to fill the main block, the way Circuit, Tabata and Superset
+// already do. One helper each, so the plan banner and the timer can never
+// disagree about how long the block runs.
+function mainBlockSec(w){ return Math.max(300, Math.round(((w && w.mainDur) || 30) * 60)); }
+
+function emomPlan(w){
+  const ex = (w && w.exercises) || [];
+  const exPerMin = ex.length <= 6 ? 2 : 3;
+  const workPerEx = Math.floor(40 / exPerMin);
+  const groups = [];
+  for (let i = 0; i < ex.length; i += exPerMin) groups.push({ start:i, items:ex.slice(i, i + exPerMin) });
+  const minuteSec = 4 + workPerEx * exPerMin + 20;
+  const totalMins = groups.length
+    ? Math.max(groups.length, Math.round(mainBlockSec(w) / minuteSec))
+    : 0;
+  return { exPerMin, workPerEx, groups, minuteSec, totalMins };
+}
+
+function ygigPlan(w){
+  const ex = (w && w.exercises) || [];
+  const workSec = (w && w.ygigWorkSec) || 45;
+  const pairs = [];
+  for (let i = 0; i < ex.length; i += 2) pairs.push({ idx:i, primary:ex[i], active:ex[i+1] || ex[i] });
+  const pairSec = 5 + workSec * 2 + 8 + 10;
+  // Partner work needs a prop for both people at once, so the shareable pool
+  // can come back small. Cap the rounds rather than loop two pairs nine times —
+  // a slightly short class beats a numbingly repetitive one.
+  const rounds = pairs.length
+    ? Math.max(1, Math.min(6, Math.round(mainBlockSec(w) / (pairSec * pairs.length))))
+    : 0;
+  return { workSec, pairs, pairSec, rounds };
+}
+
 function buildTimerSequence(){
   const {style,exercises,warmup,cooldown}=state.workout,seq=[];
   warmup.forEach((ex,i)=>{
@@ -1510,53 +1696,54 @@ function buildTimerSequence(){
   if(style==='tabata'){exercises.forEach((ex,ei)=>{for(let r=0;r<8;r++){seq.push({phase:'work',label:'WORK',name:ex.name,prop:ex.propLabel,duration:20,round:r+1,totalRounds:8,_exIdx:ei});seq.push({phase:'rest',label:'REST',name:ex.name,prop:'',duration:10,round:r+1,totalRounds:8,_exIdx:ei});}seq.push({phase:'rest',label:'NEXT EXERCISE',name:'',prop:'',duration:10});});}
   else if(style==='circuit'){for(let r=0;r<3;r++){seq.push({phase:'get-ready',label:'ROUND '+(r+1)+' OF 3',name:'Round Starting',prop:'',duration:5});exercises.forEach((ex,ei)=>{seq.push({phase:'work',label:'WORK',name:ex.name,prop:ex.propLabel,duration:45,round:r+1,totalRounds:3,_exIdx:ei});seq.push({phase:'rest',label:'REST',name:'',prop:'',duration:15});});if(r<2)seq.push({phase:'rest',label:'ROUND REST',name:'',prop:'',duration:30});}}
   else if(style==='emom'){
-    const exPerMin=exercises.length<=6?2:3;
-    const workPerEx=Math.floor(40/exPerMin);
-    let minuteNum=0;
-    for(let i=0;i<exercises.length;i+=exPerMin){
-      minuteNum++;
-      const group=exercises.slice(i,i+exPerMin);
-      const totalMins=Math.ceil(exercises.length/exPerMin);
-      seq.push({phase:'get-ready',label:'MINUTE '+minuteNum+' OF '+totalMins,name:group.map(e=>e.name).join(' + '),prop:'',duration:4});
-      group.forEach((ex,gi)=>{
-        seq.push({phase:'work',label:'WORK ('+(gi+1)+'/'+group.length+')',name:ex.name,prop:ex.propLabel,
-          duration:workPerEx,round:minuteNum,totalRounds:totalMins,_exIdx:i+gi});
+    const p=emomPlan(state.workout);
+    for(let m=0;m<p.totalMins;m++){
+      const g=p.groups[m%p.groups.length];
+      seq.push({phase:'get-ready',label:'MINUTE '+(m+1)+' OF '+p.totalMins,name:g.items.map(e=>e.name).join(' + '),prop:'',duration:4});
+      g.items.forEach((ex,gi)=>{
+        seq.push({phase:'work',label:'WORK ('+(gi+1)+'/'+g.items.length+')',name:ex.name,prop:ex.propLabel,
+          duration:p.workPerEx,round:m+1,totalRounds:p.totalMins,_exIdx:g.start+gi});
       });
       seq.push({phase:'rest',label:'REST',name:'',prop:'',duration:20});
     }
   }
-  else if(style==='amrap'){const perEx=Math.max(30,Math.floor(state.workout.mainDur*60/exercises.length));exercises.forEach((ex,i)=>{seq.push({phase:'work',label:'AMRAP',name:ex.name,prop:ex.propLabel,duration:perEx,round:1,totalRounds:1,_exIdx:i});seq.push({phase:'rest',label:'REST',name:'',prop:'',duration:10});});}
-  else if(style==='ladder'){[5,10,15,20].forEach((reps,ri)=>{exercises.forEach((ex,ei)=>{seq.push({phase:'work',label:reps+' REPS',name:ex.name,prop:ex.propLabel,duration:30,round:ri+1,totalRounds:4,_exIdx:ei});seq.push({phase:'rest',label:'REST',name:'',prop:'',duration:15});});});}
-  else if(style==='pyramid'){[5,10,15,20,15,10,5].forEach((reps,ri)=>{seq.push({phase:'get-ready',label:reps+' REPS',name:'Round '+(ri+1)+' of 7',prop:'',duration:4});exercises.forEach((ex,ei)=>{seq.push({phase:'work',label:reps+' REPS',name:ex.name,prop:ex.propLabel,duration:30,round:ri+1,totalRounds:7,_exIdx:ei});seq.push({phase:'rest',label:'REST',name:'',prop:'',duration:15});});});}
-  else if(style==='hundred'){
-    seq.push({phase:'get-ready',label:'100 REPS CHALLENGE',name:'10 + 20 + 30 ... + 100 reps',prop:'',duration:5});
-    exercises.forEach((ex,i)=>{
-      const reps=(i+1)*10;
-      const restSec=Math.max(15,reps*1.5|0); // more rest for higher reps
-      seq.push({phase:'work',label:'EX '+(i+1)+'/10 — '+reps+' REPS',name:ex.name,prop:ex.propLabel,
-        duration:Math.max(30,reps*3),round:i+1,totalRounds:10,_exIdx:i,_hundredReps:reps});
-      seq.push({phase:'rest',label:'REST ('+(i<9?'next: '+((i+2)*10)+' reps':'last set!')+')',name:'',prop:'',duration:restSec});
-    });
-    seq.push({phase:'get-ready',label:'💯 100 REPS DONE!',name:'Amazing work! Total: 550 reps',prop:'',duration:5});
+  else if(SELF_PACED[style]){
+    // One continuous clock for the whole main block. These four styles are
+    // paced by the athlete, so forcing every set into its own slot both
+    // overran the class (pyramid built ~42 min of clock for a 33 min block)
+    // and stopped anyone from working at their own speed.
+    const cfg=SELF_PACED[style];
+    const capSec=Math.max(300,Math.round((state.workout.mainDur||30)*60));
+    const rungs=classRungs(state.workout);
+    const ladder=exercises.map((ex,i)=>({n:i+1,name:ex.name,prop:ex.propLabel||'',
+      reps:cfg.reps?cfg.reps(ex,i):(parseInt(ex.reps,10)||0),unit:ex.unit||'reps'}));
+    const headline=cfg.headline(ladder,rungs);
+    seq.push({phase:'get-ready',label:cfg.ready,name:headline,prop:'',duration:5});
+    seq.push({phase:'work',label:cfg.label,name:headline,prop:'',duration:capSec,
+      round:1,totalRounds:1,_exIdx:0,_ladder:ladder,_rungs:rungs||null,
+      _paceNote:cfg.note,_pace:style});
+    seq.push({phase:'get-ready',label:cfg.icon+' TIME!',name:headline,prop:'',duration:5});
   }
   else if(style==='ygig'){
+    const p=ygigPlan(state.workout);
     seq.push({phase:'get-ready',label:'YOU-GO-I-GO',name:'Partners ready!',prop:'',duration:5});
-    const totalPairs=Math.floor(exercises.length/2);
-    for(let i=0;i<exercises.length;i+=2){
-      const primary=exercises[i];
-      const activeRest=exercises[i+1]||exercises[i];
-      const pairNum=Math.floor(i/2)+1;
-      seq.push({phase:'get-ready',label:'PAIR '+pairNum+' OF '+totalPairs,name:primary.name+' + '+activeRest.name,prop:'',duration:5});
-      // Round 1: Person A does primary reps, Person B holds active rest
-      seq.push({phase:'work',label:'PERSON A — REPS',name:primary.name,prop:primary.propLabel,
-        duration:state.workout.ygigWorkSec||primary.seconds||45,round:1,totalRounds:2,_exIdx:i,
-        _ygig:{role:'primary',partner:activeRest.name,partnerProp:activeRest.propLabel,reps:primary.reps}});
-      seq.push({phase:'rest',label:'SWITCH!',name:'Partners switch positions',prop:'',duration:8});
-      // Round 2: Person B does primary reps, Person A holds active rest
-      seq.push({phase:'work',label:'PERSON B — REPS',name:primary.name,prop:primary.propLabel,
-        duration:state.workout.ygigWorkSec||primary.seconds||45,round:2,totalRounds:2,_exIdx:i,
-        _ygig:{role:'primary',partner:activeRest.name,partnerProp:activeRest.propLabel,reps:primary.reps}});
-      seq.push({phase:'rest',label:'NEXT PAIR',name:'',prop:'',duration:10});
+    for(let r=0;r<p.rounds;r++){
+      if(p.rounds>1) seq.push({phase:'get-ready',label:'ROUND '+(r+1)+' OF '+p.rounds,name:'Round Starting',prop:'',duration:5});
+      p.pairs.forEach((pair,pi)=>{
+        const primary=pair.primary, activeRest=pair.active;
+        const workSec=state.workout.ygigWorkSec||primary.seconds||45;
+        seq.push({phase:'get-ready',label:'PAIR '+(pi+1)+' OF '+p.pairs.length,name:primary.name+' + '+activeRest.name,prop:'',duration:5});
+        // Round 1: Person A does primary reps, Person B holds active rest
+        seq.push({phase:'work',label:'PERSON A — REPS',name:primary.name,prop:primary.propLabel,
+          duration:workSec,round:1,totalRounds:2,_exIdx:pair.idx,
+          _ygig:{role:'primary',partner:activeRest.name,partnerProp:activeRest.propLabel,reps:primary.reps}});
+        seq.push({phase:'rest',label:'SWITCH!',name:'Partners switch positions',prop:'',duration:8});
+        // Round 2: Person B does primary reps, Person A holds active rest
+        seq.push({phase:'work',label:'PERSON B — REPS',name:primary.name,prop:primary.propLabel,
+          duration:workSec,round:2,totalRounds:2,_exIdx:pair.idx,
+          _ygig:{role:'primary',partner:activeRest.name,partnerProp:activeRest.propLabel,reps:primary.reps}});
+        seq.push({phase:'rest',label:'NEXT PAIR',name:'',prop:'',duration:10});
+      });
     }
   }
   else if(style==='superset'){for(let i=0;i<exercises.length;i+=2){const pair=exercises.slice(i,i+2);for(let r=0;r<4;r++){pair.forEach((ex,pi)=>{seq.push({phase:'work',label:'WORK',name:ex.name,prop:ex.propLabel,duration:40,round:r+1,totalRounds:4,_exIdx:i+pi});seq.push({phase:'rest',label:'REST',name:'',prop:'',duration:20});});}seq.push({phase:'rest',label:'SUPERSET REST',name:'',prop:'',duration:30});}}
@@ -1611,10 +1798,6 @@ function loadTimerStep(idx){
   if(step.phase==='work')audioCue.startWork();else if(step.phase==='rest')audioCue.startRest();
   const phaseEl=document.getElementById('timer-phase');phaseEl.textContent=step.label;phaseEl.className='phase-label';
   if(step.phase==='work')phaseEl.classList.add('work');else if(step.phase==='rest')phaseEl.classList.add('rest');else if(step.phase==='warmup'||step.phase==='cooldown')phaseEl.classList.add('warmcool');else phaseEl.classList.add('get-ready');
-  // 100-rep: show progressive rep count prominently
-  if(step._hundredReps && step.phase==='work'){
-    document.getElementById('timer-exercise').textContent=step.name+' — '+step._hundredReps+' REPS';
-  }
   // YGIG: show both partner exercises
   if(step._ygig && step.phase==='work'){
     const ygigInfo=document.getElementById('ygig-partner-info');
@@ -1627,6 +1810,20 @@ function loadTimerStep(idx){
     const ygigInfo=document.getElementById('ygig-partner-info');
     if(ygigInfo) ygigInfo.style.display='none';
     document.getElementById('timer-exercise').textContent=step.name||'';
+  }
+  const ladderEl=document.getElementById('block-ladder');
+  if(ladderEl){
+    if(step._ladder){
+      const rungs=step._rungs;
+      ladderEl.style.display='block';
+      ladderEl.innerHTML='<div class="hl-title">'+escapeHtml(step._paceNote||'')+'</div>'+
+        (rungs?'<div class="hl-rungs">'+rungs.map((r,i)=>'<span class="hl-rung">'+r+'</span>'+
+          (i<rungs.length-1?'<span class="hl-arrow">→</span>':'')).join('')+'</div>':'')+
+        '<div class="hl-grid">'+step._ladder.map(l=>'<div class="hl-item">'+
+          '<span class="hl-n">'+l.n+'</span>'+
+          '<span class="hl-name">'+escapeHtml(l.name)+'</span>'+
+          (rungs?'':'<span class="hl-reps">'+l.reps+'</span>')+'</div>').join('')+'</div>';
+    } else { ladderEl.style.display='none'; ladderEl.innerHTML=''; }
   }
   const propEl=document.getElementById('timer-prop');propEl.textContent=step.prop||'';propEl.style.display=step.prop?'inline-block':'none';
   const cueEl=document.getElementById('timer-cue');
@@ -1651,7 +1848,7 @@ function loadParticipantStep(idx){
   let headline=step.name||'';
   const next=seq[idx+1];
   let subline=next?.name?'Next: '+next.name:(next?.label?'Next: '+next.label:'');
-  if(step.phase==='work'&&step._hundredReps){ subline=step._hundredReps+' reps this set'; }
+  if(step.phase==='work'&&step._paceNote){ subline=step._paceNote; }
   if(step.phase==='work'&&step._ygig){
     headline=step.name+' — '+step._ygig.reps+' reps';
     subline='Partner: '+step._ygig.partner+' (active rest)';
@@ -1660,7 +1857,24 @@ function loadParticipantStep(idx){
   document.getElementById('p-next').textContent=subline;
 
   const pProp=document.getElementById('p-prop');pProp.textContent=step.prop||'';pProp.style.display=step.prop?'block':'none';
-  const pDisp=document.getElementById('p-timer');if(pDisp)pDisp.textContent=String(step.duration).padStart(2,'0');
+  const pLad=document.getElementById('p-ladder');
+  if(pLad){
+    if(step._ladder){
+      const rungs=step._rungs;
+      pLad.style.display='block';
+      pLad.innerHTML=(rungs?'<div class="pl-rungs">'+rungs.map((r,i)=>'<span class="pl-rung">'+r+'</span>'+
+          (i<rungs.length-1?'<span class="pl-arrow">→</span>':'')).join('')+'</div>':'')+
+        '<div class="pl-grid">'+step._ladder.map(l=>'<div class="pl-item">'+
+          '<span class="pl-n">'+l.n+'</span>'+
+          '<span class="pl-name">'+escapeHtml(l.name)+'</span>'+
+          (rungs?'':'<span class="pl-reps">'+l.reps+'</span>')+'</div>').join('')+'</div>';
+    } else { pLad.style.display='none'; pLad.innerHTML=''; }
+  }
+  const pDisp=document.getElementById('p-timer');
+  if(pDisp)pDisp.textContent=step.duration>=60
+    ?Math.floor(step.duration/60)+':'+String(step.duration%60).padStart(2,'0')
+    :String(step.duration).padStart(2,'0');
+  const pUnitEl=document.getElementById('p-timer-unit');if(pUnitEl)pUnitEl.textContent=step.duration>=60?'remaining':'seconds';
   const pProg=document.getElementById('p-overall-progress');if(pProg)pProg.style.width=(idx/state.timer.totalSteps*100)+'%';
 }
 // ─── AUDIO CUES ───────────────────────────────────────────────
@@ -1701,10 +1915,16 @@ function toggleSound(){
 
 function updateTimerDisplay(){
   const s=state.timer.seconds;
-  document.getElementById('timer-display').textContent=String(s).padStart(2,'0');
+  // A whole-block countdown runs for many minutes, so raw seconds ("1980")
+  // are unreadable across a room. Switch to m:ss once past a minute.
+  const txt=s>=60?Math.floor(s/60)+':'+String(s%60).padStart(2,'0'):String(s).padStart(2,'0');
+  const unit=s>=60?'remaining':'seconds';
+  document.getElementById('timer-display').textContent=txt;
+  const tUnit=document.getElementById('timer-unit');if(tUnit)tUnit.textContent=unit;
   const step=state.timer.sequence[state.timer.current],total=step?step.duration:1;
   document.getElementById('timer-arc').style.strokeDashoffset=CIRCUMFERENCE*(1-s/total);
-  const pDisp=document.getElementById('p-timer');if(pDisp)pDisp.textContent=String(s).padStart(2,'0');
+  const pDisp=document.getElementById('p-timer');if(pDisp)pDisp.textContent=txt;
+  const pUnit=document.getElementById('p-timer-unit');if(pUnit)pUnit.textContent=unit;
   const pCircle=document.getElementById('p-timer-circle');
   if(pCircle&&step){pCircle.className='p-timer-circle';if(step.phase==='rest')pCircle.classList.add('rest');else if(step.phase==='warmup'||step.phase==='cooldown')pCircle.classList.add('warmcool');}
 }
