@@ -11,14 +11,17 @@ const EMOJI_OPTIONS = [
 ];
 
 // ── PROFILE DEFINITIONS ───────────────────────────────────────
-// Load saved icons from localStorage
+// These run at file scope, so an unguarded throw here takes the whole file
+// with it — no PROFILES, no instructor picker, no Studio View. Safari throws
+// rather than returning null whenever storage is off-limits, so every one of
+// them goes through IHStore.
 function loadProfileIcons() {
-  return JSON.parse(localStorage.getItem('hiit_profile_icons') || '{}');
+  return IHStore.getJSON('hiit_profile_icons', {}) || {};
 }
 function saveProfileIcon(id, icon) {
   const icons = loadProfileIcons();
   icons[id] = icon;
-  localStorage.setItem('hiit_profile_icons', JSON.stringify(icons));
+  return IHStore.setJSON('hiit_profile_icons', icons);
 }
 
 const _savedIcons = loadProfileIcons();
@@ -30,17 +33,17 @@ const PROFILES = {
 
 // ── PROFILE STATE ─────────────────────────────────────────────
 const profileState = {
-  activeProfile: localStorage.getItem('hiit_active_profile') || 'kat',
+  activeProfile: IHStore.get('hiit_active_profile') || 'kat',
   // Per-profile data stored as: hiit_profile_{id}_plans
   scheduleFilter: 'all', // 'all' | profile id
 };
 
 // ── HELPERS ───────────────────────────────────────────────────
 function getProfilePlans(profileId) {
-  return JSON.parse(localStorage.getItem('hiit_profile_'+profileId+'_plans') || '[]');
+  return IHStore.getJSON('hiit_profile_'+profileId+'_plans', []) || [];
 }
 function saveProfilePlans(profileId, plans) {
-  localStorage.setItem('hiit_profile_'+profileId+'_plans', JSON.stringify(plans));
+  return IHStore.setJSON('hiit_profile_'+profileId+'_plans', plans);
 }
 function getAllPlans() {
   // Returns all plans across all profiles, sorted chronologically
@@ -138,7 +141,7 @@ function switchProfile(id) {
     return;
   }
   profileState.activeProfile = id;
-  localStorage.setItem('hiit_active_profile', id);
+  IHStore.set('hiit_active_profile', id);
   if (typeof setCurrentInstructorId === 'function') setCurrentInstructorId(id);
   // Their classes, not the last person's.
   if (typeof loadPersonalData === 'function') loadPersonalData();
@@ -534,7 +537,7 @@ const folderSync = {
   dirHandle: null,          // FileSystemDirectoryHandle
   supported: typeof window !== 'undefined' && 'showDirectoryPicker' in window,
   lastExportName: null,
-  lastCheckTime: localStorage.getItem('hiit_folder_last_check') || null,
+  lastCheckTime: IHStore.get('hiit_folder_last_check') || null,
 };
 
 // Restore folder handle across sessions using IndexedDB
@@ -665,7 +668,7 @@ async function checkFolderForNewFiles() {
     // Show file picker modal
     showFolderFilePicker(jsonFiles);
     folderSync.lastCheckTime = new Date().toISOString();
-    localStorage.setItem('hiit_folder_last_check', folderSync.lastCheckTime);
+    IHStore.set('hiit_folder_last_check', folderSync.lastCheckTime);
     updateFolderSyncUI();
   } catch(e) {
     showToast('Could not read folder: ' + e.message, 'error');
