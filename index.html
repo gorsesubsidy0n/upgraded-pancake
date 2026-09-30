@@ -7,8 +7,26 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
 <title>Inspire Habits</title>
+<!-- Installing the app (Safari: Share → Add to Dock, iOS: Add to Home
+     Screen) is the only thing that exempts it from Safari's rule of
+     deleting all site data after seven days unvisited. The manifest and
+     icons are what make that install look like a real app rather than a
+     nameless bookmark. Paths are relative so this works unchanged from a
+     folder, from localhost, and from a GitHub Pages subpath. -->
+<link href="manifest.json" rel="manifest"/>
+<meta content="#0d0d0f" name="theme-color"/>
+<link href="apple-touch-icon.png" rel="apple-touch-icon"/>
+<link href="icon-192.png" rel="icon" type="image/png"/>
+<meta content="yes" name="mobile-web-app-capable"/>
+<meta content="yes" name="apple-mobile-web-app-capable"/>
+<meta content="black-translucent" name="apple-mobile-web-app-status-bar-style"/>
+<meta content="Inspire Habits" name="apple-mobile-web-app-title"/>
 <link href="style.css" rel="stylesheet"/>
 <script src="auth.js"></script>
+<!-- Must precede every file that stores anything: it is the only place
+     allowed to touch localStorage, and Safari throws rather than
+     returning null when storage is off-limits. -->
+<script src="storage.js"></script>
 <script>
 // Safety net. If auth.js did not finish — a stray quote in a pasted code
 // line is the usual reason — every function below it is missing and the

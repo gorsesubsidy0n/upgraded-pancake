@@ -12,9 +12,9 @@ const state = {
   timer: { interval:null, seconds:0, current:0, isRunning:false, sequence:[], totalSteps:0 },
   savedWorkouts:   [],
   workoutHistory:  [],
-  customExercises: JSON.parse(localStorage.getItem('hiit_custom_v2')       || '{}'),
-  customWarmup:    JSON.parse(localStorage.getItem('hiit_custom_warmup')   || '[]'),
-  customCooldown:  JSON.parse(localStorage.getItem('hiit_custom_cooldown') || '[]'),
+  customExercises: IHStore.getJSON('hiit_custom_v2',       {}),
+  customWarmup:    IHStore.getJSON('hiit_custom_warmup',   []),
+  customCooldown:  IHStore.getJSON('hiit_custom_cooldown', []),
   inventory: {},
   modal: { category:null, editTarget:null, editIndex:null },
   libraryFilter: 'all', viewMode: 'instructor',
@@ -509,7 +509,7 @@ function normalizeProp(id, raw, fallback) {
 
 function loadInventory() {
   let saved = {};
-  try { saved = JSON.parse(localStorage.getItem(INVENTORY_KEY) || '{}') || {}; } catch (e) { saved = {}; }
+  saved = IHStore.getJSON(INVENTORY_KEY, {}) || {};
   const out = {};
   // Built-ins first so the familiar order survives, then anything the
   // instructor added themselves.
@@ -531,8 +531,7 @@ function saveInventory() {
   });
   // Remember which built-ins were deleted, or they would come straight back.
   PROP_ORDER.forEach(id => { if (!state.inventory[id]) out[id] = { _removed:true }; });
-  try { localStorage.setItem(INVENTORY_KEY, JSON.stringify(out)); return true; }
-  catch (e) { return false; }
+  return IHStore.setJSON(INVENTORY_KEY, out);
 }
 
 const propMeta  = id => (state.inventory && state.inventory[id]) || PROP_DEFAULTS[id] ||
@@ -628,11 +627,22 @@ const STUDIO_HISTORY = 'hiit_history_studio';
 // sessionStorage, not localStorage: it survives a refresh mid-class but dies
 // with the tab, so the next person to open the app is always asked who they
 // are instead of inheriting whoever taught last.
+//
+// Safari blocks sessionStorage too on a file:// page. Without the memory
+// fallback below, currentInstructorId() would return '' on every call and
+// all three instructors would quietly share one shelf again — the exact
+// bug the per-instructor keys were added to fix.
+let instructorIdMemo = '';
 function currentInstructorId() {
-  try { return sessionStorage.getItem(INSTRUCTOR_SESSION_KEY) || ''; } catch (e) { return ''; }
+  try {
+    const v = IHStore.getSession(INSTRUCTOR_SESSION_KEY);
+    if (v) return v;
+  } catch (e) {}
+  return instructorIdMemo;
 }
 function setCurrentInstructorId(id) {
-  try { sessionStorage.setItem(INSTRUCTOR_SESSION_KEY, id); } catch (e) {}
+  instructorIdMemo = id || '';
+  IHStore.setSession(INSTRUCTOR_SESSION_KEY, id);
 }
 function personalKey(base, id) {
   const who = id || currentInstructorId();
@@ -643,16 +653,14 @@ function personalKey(base, id) {
 // once rather than letting three people open the new build to empty shelves.
 const PERSONAL_SPLIT_FLAG = 'hiit_personal_split_done';
 function migrateLegacyPersonalData() {
-  try {
-    if (localStorage.getItem(PERSONAL_SPLIT_FLAG)) return;
-    const owner = localStorage.getItem('hiit_active_profile') || 'kat';
-    [PERSONAL_SAVED, PERSONAL_HISTORY].forEach(base => {
-      const legacy = localStorage.getItem(base);
-      const target = base + '__' + owner;
-      if (legacy && !localStorage.getItem(target)) localStorage.setItem(target, legacy);
-    });
-    localStorage.setItem(PERSONAL_SPLIT_FLAG, '1');
-  } catch (e) {}
+  if (IHStore.get(PERSONAL_SPLIT_FLAG)) return;
+  const owner = IHStore.get('hiit_active_profile') || 'kat';
+  [PERSONAL_SAVED, PERSONAL_HISTORY].forEach(base => {
+    const legacy = IHStore.get(base);
+    const target = base + '__' + owner;
+    if (legacy && !IHStore.get(target)) IHStore.set(target, legacy);
+  });
+  IHStore.set(PERSONAL_SPLIT_FLAG, '1');
 }
 
 // Histories that were filed per-instructor get poured into the one studio log
@@ -660,24 +668,22 @@ function migrateLegacyPersonalData() {
 // already taught when this build lands.
 const STUDIO_MERGE_FLAG = 'hiit_history_studio_done';
 function migrateHistoryToStudio() {
-  try {
-    if (localStorage.getItem(STUDIO_MERGE_FLAG)) return;
-    const ids = (typeof PROFILES !== 'undefined') ? Object.keys(PROFILES) : ['kat', 'carson', 'melissa'];
-    // A pre-profiles history has no owner recorded. It belongs to whoever was
-    // last active — the same assumption migrateLegacyPersonalData already
-    // makes — and must NOT be pinned on whoever happens to open this build
-    // first, which would credit their classes to a stranger.
-    const legacyOwner = localStorage.getItem('hiit_active_profile') || 'kat';
-    const lists = [readJSON(STUDIO_HISTORY, '[]')];
-    ids.forEach(id => {
-      lists.push(readJSON(PERSONAL_HISTORY + '__' + id, '[]')
-        .map(h => stampInstructor(h, h.instructorId || h.profileId || id)));
-    });
-    lists.push(readJSON(PERSONAL_HISTORY, '[]')
-      .map(h => stampInstructor(h, h.instructorId || h.profileId || legacyOwner)));
-    localStorage.setItem(STUDIO_HISTORY, JSON.stringify(mergeById.apply(null, lists).slice(0, HISTORY_CAP)));
-    localStorage.setItem(STUDIO_MERGE_FLAG, '1');
-  } catch (e) {}
+  if (IHStore.get(STUDIO_MERGE_FLAG)) return;
+  const ids = (typeof PROFILES !== 'undefined') ? Object.keys(PROFILES) : ['kat', 'carson', 'melissa'];
+  // A pre-profiles history has no owner recorded. It belongs to whoever was
+  // last active — the same assumption migrateLegacyPersonalData already
+  // makes — and must NOT be pinned on whoever happens to open this build
+  // first, which would credit their classes to a stranger.
+  const legacyOwner = IHStore.get('hiit_active_profile') || 'kat';
+  const lists = [readJSON(STUDIO_HISTORY, [])];
+  ids.forEach(id => {
+    lists.push(readJSON(PERSONAL_HISTORY + '__' + id, [])
+      .map(h => stampInstructor(h, h.instructorId || h.profileId || id)));
+  });
+  lists.push(readJSON(PERSONAL_HISTORY, [])
+    .map(h => stampInstructor(h, h.instructorId || h.profileId || legacyOwner)));
+  IHStore.setJSON(STUDIO_HISTORY, mergeById.apply(null, lists).slice(0, HISTORY_CAP));
+  IHStore.set(STUDIO_MERGE_FLAG, '1');
 }
 
 // Three people now share one shelf, so a 50-class cap would quietly evict a
@@ -697,13 +703,12 @@ function stampInstructor(entry, id) {
 }
 
 function readJSON(key, fallback) {
-  try { return JSON.parse(localStorage.getItem(key) || fallback); }
-  catch (e) { return JSON.parse(fallback); }
+  return IHStore.getJSON(key, fallback);
 }
 /** Pulls the signed-in instructor's own classes, plus the shared studio log. */
 function loadPersonalData() {
-  state.savedWorkouts  = readJSON(personalKey(PERSONAL_SAVED), '[]');
-  state.workoutHistory = readJSON(STUDIO_HISTORY, '[]');
+  state.savedWorkouts  = readJSON(personalKey(PERSONAL_SAVED), []);
+  state.workoutHistory = readJSON(STUDIO_HISTORY, []);
 }
 
 // Two tabs on one laptop each hold their own copy of these lists, so writing
@@ -717,22 +722,27 @@ function mergeById(...lists) {
   return out.sort((a, b) => (b.id || 0) - (a.id || 0));
 }
 function syncSavedWorkouts() {
-  state.savedWorkouts = mergeById(state.savedWorkouts, readJSON(personalKey(PERSONAL_SAVED), '[]'));
+  state.savedWorkouts = mergeById(state.savedWorkouts, readJSON(personalKey(PERSONAL_SAVED), []));
   return state.savedWorkouts;
 }
 /** Same protection for the studio log — two instructors teaching back-to-back
  *  on one laptop must not overwrite each other's classes. */
 function syncHistory() {
-  state.workoutHistory = mergeById(state.workoutHistory, readJSON(STUDIO_HISTORY, '[]')).slice(0, HISTORY_CAP);
+  state.workoutHistory = mergeById(state.workoutHistory, readJSON(STUDIO_HISTORY, [])).slice(0, HISTORY_CAP);
   return state.workoutHistory;
 }
 
+/** Writes everything personal back. Returns false if any part of it failed
+ *  to reach disk, so callers can tell the instructor the truth rather than
+ *  showing a tick over a class that was never stored. */
 function saveToStorage() {
-  localStorage.setItem(personalKey(PERSONAL_SAVED), JSON.stringify(state.savedWorkouts));
-  localStorage.setItem(STUDIO_HISTORY, JSON.stringify(syncHistory()));
-  localStorage.setItem('hiit_custom_v2',       JSON.stringify(state.customExercises));
-  localStorage.setItem('hiit_custom_warmup',   JSON.stringify(state.customWarmup));
-  localStorage.setItem('hiit_custom_cooldown', JSON.stringify(state.customCooldown));
+  let ok = true;
+  ok = IHStore.setJSON(personalKey(PERSONAL_SAVED), state.savedWorkouts) && ok;
+  ok = IHStore.setJSON(STUDIO_HISTORY, syncHistory()) && ok;
+  ok = IHStore.setJSON('hiit_custom_v2',       state.customExercises) && ok;
+  ok = IHStore.setJSON('hiit_custom_warmup',   state.customWarmup) && ok;
+  ok = IHStore.setJSON('hiit_custom_cooldown', state.customCooldown) && ok;
+  return ok;
 }
 function showToast(msg, type='') {
   let t = document.getElementById('toast');
@@ -1726,9 +1736,13 @@ function saveWorkout(name){
     warmupDuration:state.warmupDuration,
     ygigWorkSec:state.ygigWorkSec
   };
-  state.savedWorkouts=mergeById([saved],state.savedWorkouts,readJSON(personalKey(PERSONAL_SAVED),'[]'));
+  state.savedWorkouts=mergeById([saved],state.savedWorkouts,readJSON(personalKey(PERSONAL_SAVED),[]));
   if(state.savedWorkouts.length>20)state.savedWorkouts.length=20;
-  saveToStorage();showToast('✅ Saved “'+clean+'”','success');
+  // A tick over a class the browser refused to keep is the worst outcome:
+  // she finds out on Monday, in front of the room. Say so now instead.
+  if(saveToStorage())showToast('✅ Saved “'+clean+'”','success');
+  else showToast('⚠️ “'+clean+'” is open now, but this browser won\'t keep it ('+
+    IHStore.shortReason()+'). Tap ⬇︎ Back up on the Saved screen.','warn');
   return saved;
 }
 function exportPDF(){
@@ -1809,7 +1823,13 @@ function showHistory(){
     hc.appendChild(d);
   });
   const sc=document.getElementById('saved-list');sc.innerHTML='';
-  if(!state.savedWorkouts.length)sc.innerHTML='<div class="empty-state">No saved classes yet.<br>Build a class, then tap 💾 Save Class on the plan screen.</div>';
+  sc.appendChild(buildStorageNotice());
+  const tools=document.createElement('div');
+  tools.className='saved-tools';
+  tools.innerHTML='<button class="small-btn" onclick="exportSavedClasses()">⬇︎ Back up to file</button>'+
+    '<button class="small-btn" onclick="triggerImportClasses()">📥 Restore from file</button>';
+  sc.appendChild(tools);
+  if(!state.savedWorkouts.length)sc.insertAdjacentHTML('beforeend','<div class="empty-state">No saved classes yet.<br>Build a class, then tap 💾 Save Class on the plan screen.</div>');
   else state.savedWorkouts.forEach(sw=>{
     const d=document.createElement('div');d.className='history-card saved-card';
     const cfg=(sw.workout&&sw.workout.styleCfg)||{};
@@ -1832,6 +1852,42 @@ function showHistory(){
     sc.appendChild(d);
   });
   showScreen('history-screen');
+}
+// Silence is the wrong default here. If the browser is refusing to keep
+// anything, or is going to bin it a week from now, she needs to know while
+// there is still time to press Back up — not the next time she opens the app.
+function buildStorageNotice(){
+  const box=document.createElement('div');
+  if(!IHStore.ok()){
+    box.className='storage-notice is-bad';
+    box.innerHTML='<div class="sn-title">⚠️ This browser isn\'t keeping your classes</div>'+
+      '<div class="sn-body">'+escapeHtml(IHStore.explain())+'</div>';
+    return box;
+  }
+  if(IHStore.degraded()){
+    box.className='storage-notice is-bad';
+    box.innerHTML='<div class="sn-title">⚠️ Some changes weren\'t saved</div>'+
+      '<div class="sn-body">The browser stopped accepting new data part-way through this session ('+
+      escapeHtml(IHStore.shortReason())+'). Back up to a file before closing the tab.</div>';
+    return box;
+  }
+  // Safari deletes all site storage after seven days without a visit. It is
+  // the one browser where working perfectly today guarantees nothing.
+  // Installing the app exempts it, so don't nag someone who already has.
+  if (IHStore.isSafari()&&!IHStore.isInstalled()&&state.savedWorkouts.length){
+    const onPhone=/iPhone|iPad|iPod/.test(navigator.userAgent||'');
+    const how=onPhone
+      ? 'tap Share, then <b>Add to Home Screen</b>'
+      : 'open Safari\u2019s Share menu and choose <b>Add to Dock</b>';
+    box.className='storage-notice is-info';
+    box.innerHTML='<div class="sn-title">🧭 Safari clears site data after 7 days away</div>'+
+      '<div class="sn-body">Saved classes live in this browser, and Safari deletes them if '+
+      'the app goes a week without being opened. Either back them up to a file, or '+how+
+      ' — installed apps are exempt and keep their classes for good.</div>';
+    return box;
+  }
+  box.className='storage-notice is-hidden';
+  return box;
 }
 // Putting the saved settings back, not just the exercises. Without this a
 // loaded class kept whatever was last on the setup screen, so Regenerate
@@ -1867,6 +1923,156 @@ function deleteSavedWorkout(id){
   const sw=state.savedWorkouts.find(s=>s.id===id);
   if(sw&&!confirm('Delete “'+sw.name+'”?\n\nThis cannot be undone.'))return;
   state.savedWorkouts=state.savedWorkouts.filter(s=>s.id!==id);saveToStorage();showHistory();
+}
+
+// ─── BACK UP / RESTORE SAVED CLASSES ──────────────────────────
+// A browser is not a filing cabinet, and Safari is the clearest proof:
+//
+//   · Opened from a folder (file://), it stores nothing at all.
+//   · Private Browsing and "Block all cookies" refuse writes.
+//   · Even when everything works, Safari deletes all site storage after
+//     seven days without a visit. An instructor who builds a block of
+//     classes and comes back a fortnight later finds an empty shelf, with
+//     no warning and nothing to undo.
+//
+// So classes have to be able to leave the browser. A backup file is also
+// how a class moves from a laptop at home to the one in the studio, which
+// is how these three actually work.
+const BACKUP_VERSION = 1;
+
+function buildClassBackup(){
+  syncSavedWorkouts();
+  const who=currentInstructorId();
+  const p=(typeof PROFILES!=='undefined'&&who)?PROFILES[who]:null;
+  return {
+    app:'inspire-habits',
+    kind:'classes',
+    version:BACKUP_VERSION,
+    exportedAt:new Date().toISOString(),
+    instructorId:who||null,
+    instructorName:p?p.name:null,
+    classes:state.savedWorkouts,
+    // Small, and it keeps a restored class recognisable if it leans on a
+    // move the studio added itself.
+    customExercises:state.customExercises,
+    customWarmup:state.customWarmup,
+    customCooldown:state.customCooldown,
+  };
+}
+
+/** Safari needs the anchor in the document and the object URL kept alive
+ *  past the click, or the download silently never starts. */
+function downloadJSON(filename,obj){
+  try{
+    const blob=new Blob([JSON.stringify(obj,null,2)],{type:'application/json'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;a.download=filename;a.style.display='none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(()=>{
+      try{document.body.removeChild(a);}catch(e){}
+      URL.revokeObjectURL(url);
+    },4000);
+    return true;
+  }catch(e){return false;}
+}
+
+function exportSavedClasses(){
+  const data=buildClassBackup();
+  if(!data.classes.length){showToast('No saved classes to back up yet');return;}
+  const who=(data.instructorName||'studio').toLowerCase().replace(/[^a-z0-9]+/g,'-');
+  const date=new Date().toISOString().split('T')[0];
+  if(downloadJSON('inspire-habits-classes-'+who+'-'+date+'.json',data))
+    showToast('⬇︎ Backed up '+data.classes.length+' class'+(data.classes.length===1?'':'es'),'success');
+  else showToast('Couldn\'t create the backup file','error');
+}
+
+function triggerImportClasses(){
+  const input=document.createElement('input');
+  input.type='file';
+  // Safari on macOS ignores unknown MIME hints, so offer the extension too.
+  input.accept='application/json,.json';
+  input.style.display='none';
+  document.body.appendChild(input);
+  input.addEventListener('change',e=>{
+    const file=e.target.files&&e.target.files[0];
+    if(file)readClassBackup(file);
+    try{document.body.removeChild(input);}catch(err){}
+  });
+  input.click();
+}
+
+function readClassBackup(file){
+  const reader=new FileReader();
+  reader.onerror=()=>showToast('Couldn\'t read that file','error');
+  reader.onload=ev=>{
+    let data;
+    try{data=JSON.parse(ev.target.result);}
+    catch(err){showToast('That isn\'t a backup file — it isn\'t readable JSON','error');return;}
+    applyClassBackup(data);
+  };
+  reader.readAsText(file);
+}
+
+function applyClassBackup(data){
+  // Accept this app's own backups, and tolerate a bare array in case
+  // someone hand-edits one.
+  const incoming=Array.isArray(data)?data:(data&&Array.isArray(data.classes)?data.classes:null);
+  if(!incoming){showToast('That file has no saved classes in it','error');return;}
+  const valid=incoming.filter(c=>c&&c.workout&&Array.isArray(c.workout.exercises)&&c.id!=null)
+    .map(c=>{
+      // A file can be hand-edited or come from an older build. These fields
+      // sit at the top level of a saved class (the card reads them there,
+      // not from .workout), and a gap would render as "undefined min".
+      const w=c.workout||{};
+      const dateOk=typeof c.date==='string'&&!isNaN(new Date(c.date).getTime());
+      const num=(v,alt,fb)=>(typeof v==='number'&&v>0)?v:((typeof alt==='number'&&alt>0)?alt:fb);
+      return Object.assign({},c,{
+        name:(typeof c.name==='string'&&c.name.trim())?c.name:'Restored class',
+        date:dateOk?c.date:new Date().toLocaleDateString(),
+        duration:num(c.duration,w.duration,45),
+        participants:num(c.participants,w.participants,8),
+        style:c.style||w.style||'circuit',
+        muscle:c.muscle||w.muscle||'full',
+        difficulty:c.difficulty||w.diff||'intermediate',
+      });
+    });
+  if(!valid.length){showToast('No usable classes in that file','error');return;}
+
+  syncSavedWorkouts();
+  const before=state.savedWorkouts.length;
+  const existing={};
+  state.savedWorkouts.forEach(c=>{existing[c.id]=true;});
+  // A backup restored onto a laptop that already has classes must not
+  // silently drop either side, so merge by id and keep both.
+  const added=valid.filter(c=>!existing[c.id]).length;
+  state.savedWorkouts=mergeById(state.savedWorkouts,valid);
+  const overflow=state.savedWorkouts.length>20;
+  if(overflow)state.savedWorkouts.length=20;
+
+  if(data&&!Array.isArray(data)){
+    if(data.customExercises&&typeof data.customExercises==='object'){
+      Object.keys(data.customExercises).forEach(k=>{
+        if(!state.customExercises[k])state.customExercises[k]=data.customExercises[k];
+      });
+    }
+    ['customWarmup','customCooldown'].forEach(k=>{
+      if(Array.isArray(data[k])){
+        const have={};(state[k]||[]).forEach(x=>{if(x&&x.name)have[x.name]=true;});
+        data[k].forEach(x=>{if(x&&x.name&&!have[x.name])state[k].push(x);});
+      }
+    });
+  }
+
+  const stored=saveToStorage();
+  showHistory();
+  let msg='📥 Restored '+added+' class'+(added===1?'':'es');
+  if(added<valid.length)msg+=' · '+(valid.length-added)+' already here';
+  if(overflow)msg+=' · trimmed to the newest 20';
+  if(!stored)msg+=' · not kept ('+IHStore.shortReason()+')';
+  showToast(msg,stored?'success':'warn');
+  if(before&&added)console.info('[inspire-habits] merged backup into '+before+' existing classes');
 }
 
 // ─── TIMER SEQUENCE ───────────────────────────────────────────
@@ -2112,7 +2318,7 @@ function soundIsAthlete(){
 function soundKey(){ return soundIsAthlete() ? 'hiit_sound_athlete' : 'hiit_sound'; }
 function soundEnabled(){
   let v = null;
-  try { v = localStorage.getItem(soundKey()); } catch (e) {}
+  v = IHStore.get(soundKey());
   if (v === 'on')  return true;
   if (v === 'off') return false;
   return !soundIsAthlete();
@@ -2121,7 +2327,7 @@ function soundEnabled(){
 const audioCue = {
   // A getter, because __ATHLETE_MODE is not known when this file parses.
   get enabled() { return soundEnabled(); },
-  set enabled(v) { try { localStorage.setItem(soundKey(), v ? 'on' : 'off'); } catch (e) {} },
+  set enabled(v) { IHStore.set(soundKey(), v ? 'on' : 'off'); },
   ctx: null,
   ensure() {
     if (!this.ctx) {
@@ -2232,29 +2438,26 @@ function prevExercise(){stopTimer();state.timer.current=Math.max(0,state.timer.c
 const LIVE_KEY_BASE='hiit_live_session';
 function liveKey(){return personalKey(LIVE_KEY_BASE);}
 function persistLiveSession(){
-  try{
-    if(!state.workout||!state.timer.sequence.length)return;
-    localStorage.setItem(liveKey(),JSON.stringify({
-      savedAt:Date.now(),
-      workout:state.workout,
-      muscle:state.muscle,
-      viewMode:state.viewMode,
-      current:state.timer.current,
-      seconds:state.timer.seconds,
-      totalSteps:state.timer.totalSteps,
-      ma:(typeof MA!=='undefined'&&MA.enabled)?{enabled:true,groups:MA.groups,assignments:MA.assignments||null}:null,
-    }));
-  }catch(e){/* storage full or blocked — never break the class over it */}
+  if(!state.workout||!state.timer.sequence.length)return;
+  // Storage full or blocked never breaks the class — IHStore falls back to
+  // memory, which still survives a same-tab refresh of the timer screen.
+  IHStore.setJSON(liveKey(),{
+    savedAt:Date.now(),
+    workout:state.workout,
+    muscle:state.muscle,
+    viewMode:state.viewMode,
+    current:state.timer.current,
+    seconds:state.timer.seconds,
+    totalSteps:state.timer.totalSteps,
+    ma:(typeof MA!=='undefined'&&MA.enabled)?{enabled:true,groups:MA.groups,assignments:MA.assignments||null}:null,
+  });
 }
-function clearLiveSession(){try{localStorage.removeItem(liveKey());}catch(e){}}
+function clearLiveSession(){IHStore.remove(liveKey());}
 function readLiveSession(){
-  try{
-    const raw=localStorage.getItem(liveKey());if(!raw)return null;
-    const s=JSON.parse(raw);
-    // Anything older than 4 hours is a stale class, not a refresh.
-    if(!s||!s.workout||Date.now()-s.savedAt>4*60*60*1000){clearLiveSession();return null;}
-    return s;
-  }catch(e){return null;}
+  const s=IHStore.getJSON(liveKey(),null);
+  // Anything older than 4 hours is a stale class, not a refresh.
+  if(!s||!s.workout||Date.now()-s.savedAt>4*60*60*1000){clearLiveSession();return null;}
+  return s;
 }
 /** Called on load — offers to resume an interrupted class. */
 function offerSessionResume(){
@@ -2413,7 +2616,7 @@ function beginInstructorSession(id){
   migrateHistoryToStudio();
   if(typeof profileState!=='undefined'){
     profileState.activeProfile=id;
-    try{localStorage.setItem('hiit_active_profile',id);}catch(e){}
+    IHStore.set('hiit_active_profile',id);
   }
   loadPersonalData();
   if(typeof Roster!=='undefined'&&Roster.load)Roster.load();

@@ -59,13 +59,12 @@ const Roster = {
     return 'hiit_roster_' + pid;
   },
   load() {
-    try { this.people = JSON.parse(localStorage.getItem(this.key()) || '[]'); }
-    catch (e) { this.people = []; }
+    this.people = IHStore.getJSON(this.key(), []) || [];
     this.loaded = true;
     return this.people;
   },
   save() {
-    try { localStorage.setItem(this.key(), JSON.stringify(this.people)); } catch (e) {}
+    IHStore.setJSON(this.key(), this.people);
   },
   ensure() { if (!this.loaded) this.load(); return this.people; },
 

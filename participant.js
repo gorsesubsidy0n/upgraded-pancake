@@ -194,10 +194,10 @@
 
   function deviceId() {
     let d = '';
-    try { d = localStorage.getItem(DEVICE_KEY) || ''; } catch (e) {}
+    d = IHStore.get(DEVICE_KEY) || '';
     if (!/^d[a-z0-9]{5,}$/.test(d)) {
       d = 'd' + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-3);
-      try { localStorage.setItem(DEVICE_KEY, d); } catch (e) {}
+      IHStore.set(DEVICE_KEY, d);
     }
     return d;
   }
@@ -205,15 +205,15 @@
   const slugName = n => String(n || '').toLowerCase()
     .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24);
 
-  function loadNames() { try { return JSON.parse(localStorage.getItem(NAMES_KEY)) || {}; } catch (e) { return {}; } }
+  // Through IHStore so a name typed on a phone in Private Browsing still
+  // holds for the rest of the class, instead of vanishing between screens.
+  function loadNames() { return IHStore.getJSON(NAMES_KEY, {}) || {}; }
   function rememberName(uid, name) {
     const m = loadNames(); m[uid] = name;
-    try {
-      localStorage.setItem(NAMES_KEY, JSON.stringify(m));
-      localStorage.setItem(LAST_NAME_KEY, name);
-    } catch (e) {}
+    IHStore.setJSON(NAMES_KEY, m);
+    IHStore.set(LAST_NAME_KEY, name);
   }
-  const lastName = () => { try { return localStorage.getItem(LAST_NAME_KEY) || ''; } catch (e) { return ''; } };
+  const lastName = () => IHStore.get(LAST_NAME_KEY) || '';
   const titleCase = s => String(s).replace(/-+/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim();
 
   // A link can be reopened on a phone that never typed the name, so fall
@@ -231,22 +231,19 @@
   const legacyKey = sid => 'ih_athlete_' + sid;
 
   function loadProgress(sid, uid) {
-    try {
-      const raw = localStorage.getItem(storeKey(sid, uid));
-      if (raw) return JSON.parse(raw) || {};
-      // Progress saved before athletes had ids belongs to whoever is here now.
-      const old = localStorage.getItem(legacyKey(sid));
-      if (old) {
-        const p = JSON.parse(old) || {};
-        localStorage.removeItem(legacyKey(sid));
-        saveProgress(sid, uid, p);
-        return p;
-      }
-      return {};
-    } catch (e) { return {}; }
+    const cur = IHStore.getJSON(storeKey(sid, uid), null);
+    if (cur) return cur;
+    // Progress saved before athletes had ids belongs to whoever is here now.
+    const old = IHStore.getJSON(legacyKey(sid), null);
+    if (old) {
+      IHStore.remove(legacyKey(sid));
+      saveProgress(sid, uid, old);
+      return old;
+    }
+    return {};
   }
   function saveProgress(sid, uid, data) {
-    try { localStorage.setItem(storeKey(sid, uid), JSON.stringify(data)); } catch (e) {}
+    IHStore.setJSON(storeKey(sid, uid), data);
   }
 
   const two = n => (n < 10 ? '0' : '') + n;
@@ -420,7 +417,7 @@
   }
 
   function savedHost() {
-    try { return normalizeBase(localStorage.getItem(HOST_KEY) || ''); } catch (e) { return ''; }
+    return normalizeBase(IHStore.get(HOST_KEY) || '');
   }
 
   // Best address first: wherever this page already is if it is public, then
@@ -607,13 +604,13 @@
       if (window.showToast) showToast('That does not look like a web address.', 'error');
       return;
     }
-    try { localStorage.setItem(HOST_KEY, norm); } catch (e) {}
+    IHStore.set(HOST_KEY, norm);
     hostFormOpen = false;
     showClassQR();
     if (window.showToast) showToast('📶 Codes now point at ' + norm);
   };
   window.__ihClearHost = function () {
-    try { localStorage.removeItem(HOST_KEY); } catch (e) {}
+    IHStore.remove(HOST_KEY);
     hostFormOpen = false;
     showClassQR();
     if (window.showToast) showToast('Published address removed.');

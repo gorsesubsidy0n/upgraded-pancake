@@ -8,22 +8,52 @@ to install for the basic setup.
 
 ## Opening the app
 
-Unzip the folder somewhere you can find it again — Desktop or Documents is
-fine. Then pick one of the two ways below.
+There are three ways in. They behave differently — mostly on a Mac — so
+here's the short version:
 
-### Option 1 — Just open it
+| How you open it | Saving classes | Athlete link | Best for |
+|---|---|---|---|
+| **Published web link** | ✅ works (see Safari note) | ✅ works | Everyday teaching |
+| **Run the little server** | ✅ works | ✅ works | Studio wifi, no internet needed |
+| **Double-click `index.html`** | ⚠️ **not on Safari** | ❌ no | A quick look, planning offline |
 
-**Double-click `index.html`.**
+**If you're on a Mac and use the published link, read
+"Back up to a file — and why you should" further down.** Safari deletes
+stored data after seven days away, whichever way you open it.
 
-That's it. The app opens in your browser and everything works: building
-plans, editing them, going live with the timer, saved workouts, history,
-the exercise library.
+### Option 1 — The published web link
 
-The one thing that will not work is **the class link for athletes**, because
+If the app has been published (GitHub Pages or similar), just open the
+address in a browser and bookmark it. Everything works, on the laptop and
+on phones, with no setup and no terminal.
+
+**On a Mac, install it:** open the link in Safari, then **Share → Add to
+Dock**. It gets its own icon and window, and — the important part — apps
+installed this way are exempt from Safari's seven-day data purge. On an
+iPhone or iPad the same thing is **Share → Add to Home Screen**.
+
+This is the recommended way to use the app.
+
+### Option 2 — Just open it from the folder
+
+Unzip the folder somewhere you can find it again, then
+**double-click `index.html`.**
+
+The app opens in your browser: building plans, editing them, going live with
+the timer, the exercise library.
+
+**On a Mac, do not use this option if you want to save classes.** Safari
+refuses to store anything at all for a page opened straight from a folder,
+so saved classes, history and your equipment list are thrown away the moment
+you close the tab. The app will tell you so at the top of the Saved screen.
+Chrome and Edge do allow it, which is why this only bites on Safari. Use
+Option 1 or 3 instead.
+
+The other thing that will not work is **the class link for athletes**, because
 a file sitting on your laptop has no address a phone can reach. If you want
-that, use Option 2 (and read the wifi section below).
+that, use Option 3 (and read the wifi section below).
 
-### Option 2 — Run the little server
+### Option 3 — Run the little server
 
 This is what you want if athletes will open a link on their phones to track
 their own rounds and reps.
@@ -371,6 +401,56 @@ Saved classes are **private to you** — they're filed under whoever tapped
 their name when the app opened. Build at home, teach from the studio
 laptop, and nobody else's list gets in the way.
 
+### Back up to a file — and why you should
+
+At the top of the Saved screen there are two buttons:
+
+| Button | What it does |
+|---|---|
+| **⬇︎ Back up to file** | Saves all your classes into one `.json` file in Downloads |
+| **📥 Restore from file** | Reads that file back in |
+
+Restoring **merges** — it never wipes what's already on the laptop. Classes
+already there are left alone, and restoring the same file twice doesn't
+create duplicates. So the backup file is also how you move a class from your
+own laptop to the studio one: back up at home, AirDrop or email the file,
+restore at the studio.
+
+**On a Mac this is not optional.** Safari deletes everything a website has
+stored after **seven days** without you opening that site. Not just cookies
+— saved classes, history, your equipment list. It happens silently, there is
+no warning, and it cannot be undone or turned off from inside the app. Two
+weeks off over Christmas is enough to lose the lot.
+
+Three ways to stay safe, best first:
+
+1. **Install the app.** In Safari on a Mac, open it and choose **Share →
+   Add to Dock**; on an iPhone or iPad, **Share → Add to Home Screen**.
+   Apps installed this way are exempt from the seven-day rule and keep
+   their data indefinitely. This is the real fix, and it takes ten seconds.
+   Once you've done it the app stops warning you about this.
+2. **Back up to a file** after any session where you built something worth
+   keeping, and keep the file somewhere that isn't the browser.
+3. **Open the app at least once a week**, which resets Safari's clock.
+
+Chrome, Edge and Firefox don't do this, so on a PC it's far less pressing —
+but a backup file is still the only thing that survives a dead laptop.
+
+### If the app says it isn't keeping your classes
+
+A red panel at the top of the Saved screen means the browser is refusing to
+store anything. Usually one of:
+
+- the app was opened by double-clicking `index.html` on a Mac (see
+  **Opening the app** — use the server instead)
+- Private Browsing
+- Safari → Settings → Privacy → **Block all cookies**
+- storage is genuinely full
+
+The app keeps working normally for the rest of the session — nothing is lost
+while the tab is open, and you can still teach the class. But close the tab
+and it's gone, so use **⬇︎ Back up to file** before you do.
+
 ---
 
 ## Setting up your equipment
@@ -404,8 +484,11 @@ back if you put a number in later.
 | `participant.js` | The class share link and the athlete phone pages |
 | `profiles.js` | Instructor profiles and the "Who's teaching?" picker |
 | `auth.js` | The two access codes |
+| `storage.js` | The one safe door to browser storage (see the Safari notes above) |
+| `manifest.json` | Lets the app install properly via Add to Dock / Add to Home Screen |
+| `icon-*.png`, `apple-touch-icon.png` | App icons used when it's installed |
 | `style.css` | Appearance |
-| `serve.js` | Optional local server (Option 2 above) |
+| `serve.js` | Optional local server (Option 3 above) |
 | `serve.config.json` | Saved server settings |
 
 ---
@@ -418,6 +501,15 @@ top of that file. If the app is published, re-publish it afterwards.
 
 **Nothing happens when I double-click `index.html`** — right-click it,
 choose "Open with", and pick a browser.
+
+**My saved classes have vanished (Mac)** — if the app went a week or more
+without being opened, Safari deleted them; that is Safari's doing and they
+can't be recovered from the browser. Restore from a backup file if you have
+one, and see **Back up to a file — and why you should** above to stop it
+happening again.
+
+**A red panel says the browser isn't keeping my classes** — see
+**If the app says it isn't keeping your classes** above.
 
 **`node` is not recognised** — Node isn't installed, or the terminal was
 opened before installing it. Install from nodejs.org, then open a *new*
