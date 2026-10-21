@@ -31,6 +31,71 @@ const PROFILES = {
   melissa: { id:'melissa', name:'Melissa', icon: _savedIcons.melissa || '🔥', color:'orange' },
 };
 
+// Everything below that builds markup goes through these. Saved plans and
+// imported files are data, and data must never become markup or code.
+// app.js defines escapeHtml; the local copy keeps this file safe on its own.
+function _pEsc(v) {
+  if (typeof escapeHtml === 'function') return escapeHtml(v);
+  return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+// A value placed as an argument inside a click-handler attribute.
+function _pArg(v) { return _pEsc(JSON.stringify(v === undefined ? null : v)); }
+
+// Instructors can rename their card (a new colleague takes over a slot).
+// Names are cleaned on the way in, so no other screen has to worry.
+const PROFILE_NAME_MAX = 24;
+function cleanProfileName(name) {
+  return String(name == null ? '' : name).replace(/[<>"'`&\u0000-\u001f]/g, '')
+    .replace(/\s+/g, ' ').trim().slice(0, PROFILE_NAME_MAX);
+}
+function loadProfileNames() {
+  const v = IHStore.getJSON('hiit_profile_names', {});
+  return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+}
+(function applySavedProfileNames() {
+  const names = loadProfileNames();
+  Object.keys(PROFILES).forEach(id => {
+    const n = cleanProfileName(names[id]);
+    if (n) PROFILES[id].name = n;
+  });
+  // Icons come from storage too; only short, markup-free values are kept.
+  Object.keys(PROFILES).forEach(id => {
+    const ic = String(PROFILES[id].icon || '');
+    if (ic.length > 16 || /[<>"'`&]/.test(ic)) PROFILES[id].icon = '👤';
+  });
+})();
+
+function renameProfile(profileId, rawName) {
+  if (!PROFILES[profileId]) return false;
+  const name = cleanProfileName(rawName);
+  if (!name) { showToast('Please type a name', 'error'); return false; }
+  const old = PROFILES[profileId].name;
+  const names = loadProfileNames();
+  names[profileId] = name;
+  if (!IHStore.setJSON('hiit_profile_names', names)) {
+    showToast('Could not save the new name on this device', 'error');
+    return false;
+  }
+  PROFILES[profileId].name = name;
+  closeEmojiPicker();
+  renderProfileSwitcher();
+  updateProfileBadge();
+  const sched = document.getElementById('schedule-screen');
+  if (sched && sched.classList.contains('active')) renderSchedule();
+  if (old !== name) showToast(old + ' is now ' + name);
+  return true;
+}
+
+function saveProfileNameFromPicker(profileId) {
+  const input = document.getElementById('profile-rename-input');
+  if (input) renameProfile(profileId, input.value);
+}
+
+function profileRenameKey(profileId, ev) {
+  if (ev && ev.key === 'Enter') { ev.preventDefault(); saveProfileNameFromPicker(profileId); }
+}
+
 // ── PROFILE STATE ─────────────────────────────────────────────
 const profileState = {
   activeProfile: IHStore.get('hiit_active_profile') || 'kat',
@@ -40,7 +105,8 @@ const profileState = {
 
 // ── HELPERS ───────────────────────────────────────────────────
 function getProfilePlans(profileId) {
-  return IHStore.getJSON('hiit_profile_'+profileId+'_plans', []) || [];
+  const v = IHStore.getJSON('hiit_profile_'+profileId+'_plans', []);
+  return Array.isArray(v) ? v.filter(p => p && typeof p === 'object') : [];
 }
 function saveProfilePlans(profileId, plans) {
   return IHStore.setJSON('hiit_profile_'+profileId+'_plans', plans);
@@ -64,11 +130,11 @@ function renderProfileSwitcher() {
   container.innerHTML = Object.values(PROFILES).map(p => `
     <div class="profile-btn-wrap">
       <button class="profile-btn profile-btn-${p.color} ${profileState.activeProfile===p.id?'active':''}"
-        onclick="switchProfile('${p.id}')">
-        <span class="profile-icon">${p.icon}</span>
-        <span class="profile-name">${p.name}</span>
+        data-onclick="switchProfile(${_pArg(p.id)})">
+        <span class="profile-icon">${_pEsc(p.icon)}</span>
+        <span class="profile-name">${_pEsc(p.name)}</span>
       </button>
-      <button class="profile-emoji-pick-btn" onclick="openEmojiPicker('${p.id}',this)" title="Change emoji">✏️</button>
+      <button class="profile-emoji-pick-btn" data-onclick="openEmojiPicker(${_pArg(p.id)},this)" title="Change name or emoji" aria-label="Change name or emoji for ${_pEsc(p.name)}">✏️</button>
     </div>`).join('');
 }
 
@@ -78,20 +144,27 @@ let _emojiPickerTarget = null;
 function openEmojiPicker(profileId, triggerBtn) {
   // Close any existing picker
   closeEmojiPicker();
+  if (!PROFILES[profileId]) return;
 
   _emojiPickerTarget = profileId;
   const picker = document.createElement('div');
   picker.id = 'emoji-picker-popup';
   picker.className = 'emoji-picker-popup';
   picker.innerHTML =
-    '<div class="emoji-picker-title">Choose emoji for ' + PROFILES[profileId].name + '</div>' +
+    '<div class="emoji-picker-title">Name and emoji for ' + _pEsc(PROFILES[profileId].name) + '</div>' +
+    '<div class="profile-rename-row">' +
+      '<input id="profile-rename-input" class="profile-rename-input" type="text" maxlength="' + PROFILE_NAME_MAX + '"' +
+        ' aria-label="Instructor name" value="' + _pEsc(PROFILES[profileId].name) + '"' +
+        ' data-onkeydown="profileRenameKey(' + _pArg(profileId) + ',event)">' +
+      '<button type="button" class="profile-rename-save" data-onclick="saveProfileNameFromPicker(' + _pArg(profileId) + ')">Save name</button>' +
+    '</div>' +
     '<div class="emoji-picker-grid">' +
     EMOJI_OPTIONS.map(e =>
       `<button class="emoji-opt ${PROFILES[profileId].icon===e?'active':''}"
-        onclick="selectProfileEmoji('${profileId}','${e}')">${e}</button>`
+        data-onclick="selectProfileEmoji(${_pArg(profileId)},${_pArg(e)})">${_pEsc(e)}</button>`
     ).join('') +
     '</div>' +
-    '<button class="emoji-picker-close" onclick="closeEmojiPicker()">✕ Close</button>';
+    '<button class="emoji-picker-close" data-onclick="closeEmojiPicker()">✕ Close</button>';
 
   // Position near the trigger button
   const rect = triggerBtn.getBoundingClientRect();
@@ -166,16 +239,22 @@ function ihNeedsInstructorPick() {
 
 function ihInstructorPickerMarkup() {
   const cards = Object.values(PROFILES).map(p =>
-    '<button type="button" class="who-card who-' + p.color + '" data-who="' + p.id + '">' +
-      '<span class="who-icon">' + p.icon + '</span>' +
-      '<span class="who-name">' + escapeHtml(p.name) + '</span>' +
+    '<button type="button" class="who-card who-' + _pEsc(p.color) + '" data-who="' + _pEsc(p.id) + '">' +
+      '<span class="who-icon">' + _pEsc(p.icon) + '</span>' +
+      '<span class="who-name">' + _pEsc(p.name) + '</span>' +
     '</button>').join('');
+  const signOut = typeof ihSignOut === 'function'
+    ? '<p class="who-hint"><button type="button" class="who-signout" data-onclick="ihSignOut()">' +
+        'Not an instructor? Sign this laptop out</button></p>'
+    : '';
   return '<div class="who-card-wrap">' +
       '<div class="who-title">Who\u2019s teaching?</div>' +
       '<p class="who-sub">Your saved classes and history are kept separately, ' +
         'so pick yourself before you build or teach.</p>' +
       '<div class="who-grid">' + cards + '</div>' +
-      '<p class="who-hint">This laptop will forget when you close it.</p>' +
+      '<p class="who-hint">This laptop will forget when you close it. ' +
+        'To change a name, use the \u270f\ufe0f next to it after you pick.</p>' +
+      signOut +
     '</div>';
 }
 
@@ -259,7 +338,7 @@ function confirmSavePlan() {
     notes,
     style: state.workout.styleCfg.name,
     styleIcon: state.workout.styleCfg.icon,
-    muscle: MUSCLE_FOCUS[state.muscle]?.label || state.muscle,
+    muscle: muscleFocus(state.muscle).label,
     difficulty: DIFF_LABEL[state.workout.diff] || state.workout.diff,
     duration: state.workout.duration,
     participants: state.workout.participants,
@@ -289,6 +368,7 @@ function confirmSavePlan() {
 // ── SCHEDULE SCREEN ───────────────────────────────────────────
 function showSchedule() {
   renderSchedule();
+  updateFolderSyncUI();
   showScreen('schedule-screen');
 }
 
@@ -296,9 +376,9 @@ function renderSchedule() {
   const filterBtns = document.getElementById('schedule-filter-btns');
   if (filterBtns) {
     filterBtns.innerHTML =
-      `<button class="sched-filter-btn ${profileState.scheduleFilter==='all'?'active':''}" onclick="filterSchedule('all')">All Instructors</button>` +
+      `<button class="sched-filter-btn ${profileState.scheduleFilter==='all'?'active':''}" data-onclick="filterSchedule('all')">All Instructors</button>` +
       Object.values(PROFILES).map(p =>
-        `<button class="sched-filter-btn sched-filter-${p.color} ${profileState.scheduleFilter===p.id?'active':''}" onclick="filterSchedule('${p.id}')">${p.icon} ${p.name}</button>`
+        `<button class="sched-filter-btn sched-filter-${_pEsc(p.color)} ${profileState.scheduleFilter===p.id?'active':''}" data-onclick="filterSchedule(${_pArg(p.id)})">${_pEsc(p.icon)} ${_pEsc(p.name)}</button>`
       ).join('');
   }
 
@@ -333,7 +413,7 @@ function renderSchedule() {
     const isPast = planDate < now;
     const isToday = planDate.toDateString() === now.toDateString();
     dateHeader.innerHTML = `
-      <span class="sched-date-label ${isToday?'sched-today':isPast?'sched-past':''}">${isToday?'📅 TODAY — ':isPast?'✓ ':'📅 '}${date}</span>`;
+      <span class="sched-date-label ${isToday?'sched-today':isPast?'sched-past':''}">${isToday?'📅 TODAY — ':isPast?'✓ ':'📅 '}${_pEsc(date)}</span>`;
     container.appendChild(dateHeader);
 
     datePlans.forEach(plan => {
@@ -342,25 +422,25 @@ function renderSchedule() {
       card.className = `sched-card sched-card-${prof.color||'slate'} ${isPast?'sched-card-past':''}`;
       card.innerHTML = `
         <div class="sched-card-time">
-          <div class="sched-time">${plan.displayTime || '—'}</div>
+          <div class="sched-time">${_pEsc(plan.displayTime || '—')}</div>
           <div class="sched-instructor">
-            <span class="sched-instructor-icon">${prof.icon||'👤'}</span>
-            <span>${prof.name||plan.profileName}</span>
+            <span class="sched-instructor-icon">${_pEsc(prof.icon||'👤')}</span>
+            <span>${_pEsc(prof.name||plan.profileName)}</span>
           </div>
         </div>
         <div class="sched-card-info">
-          <div class="sched-workout-title">${plan.styleIcon||''} ${plan.style} — ${plan.muscle}</div>
+          <div class="sched-workout-title">${_pEsc(plan.styleIcon||'')} ${_pEsc(plan.style)} — ${_pEsc(plan.muscle)}</div>
           <div class="sched-workout-meta">
-            <span class="sched-tag">${plan.duration} min</span>
-            <span class="sched-tag">${plan.participants} people</span>
-            <span class="sched-tag">${plan.exerciseCount} exercises</span>
-            <span class="sched-tag sched-diff">${plan.difficulty}</span>
+            <span class="sched-tag">${_pEsc(plan.duration)} min</span>
+            <span class="sched-tag">${_pEsc(plan.participants)} people</span>
+            <span class="sched-tag">${_pEsc(plan.exerciseCount)} exercises</span>
+            <span class="sched-tag sched-diff">${_pEsc(plan.difficulty)}</span>
           </div>
-          ${plan.notes?`<div class="sched-notes">${plan.notes}</div>`:''}
+          ${plan.notes?`<div class="sched-notes">${_pEsc(plan.notes)}</div>`:''}
         </div>
         <div class="sched-card-actions">
-          <button class="sched-load-btn" onclick="loadScheduledPlan(${plan.id},'${plan.profileId}')">▶ Load</button>
-          <button class="sched-del-btn" onclick="deleteScheduledPlan(${plan.id},'${plan.profileId}')">✕</button>
+          <button class="sched-load-btn" data-onclick="loadScheduledPlan(${_pArg(plan.id)},${_pArg(plan.profileId)})">▶ Load</button>
+          <button class="sched-del-btn" data-onclick="deleteScheduledPlan(${_pArg(plan.id)},${_pArg(plan.profileId)})" aria-label="Delete this class plan">✕</button>
         </div>`;
       container.appendChild(card);
     });
@@ -376,21 +456,81 @@ function loadScheduledPlan(id, profileId) {
   const plans = getProfilePlans(profileId);
   const plan = plans.find(p => p.id === id);
   if (!plan || !plan.workout) { showToast('Plan not found', 'error'); return; }
-  state.workout = plan.workout;
+  if (typeof resetTimerState === 'function') resetTimerState();
+  state.workout = typeof cloneWorkout === 'function' ? cloneWorkout(plan.workout) : JSON.parse(JSON.stringify(plan.workout));
   state.muscle = plan.muscle || 'full';
+  if (typeof renderMuscleFocus === 'function') renderMuscleFocus();
   renderPlanEditor();
   showScreen('plan-editor-screen');
   showToast('Loaded: ' + plan.displayDate + ' at ' + plan.displayTime);
 }
 
+// Deleting is instant (no "are you sure?" in front of a class), and an
+// Undo bar keeps the plan for a few seconds in case it was the wrong one.
+let _lastDeletedPlan = null;
+const PLAN_UNDO_MS = 10000;
+
 function deleteScheduledPlan(id, profileId) {
-  if (!confirm('Delete this class plan?')) return;
-  const plans = getProfilePlans(profileId).filter(p => p.id !== id);
-  saveProfilePlans(profileId, plans);
+  const all = getProfilePlans(profileId);
+  const idx = all.findIndex(p => p.id === id);
+  if (idx < 0) { renderSchedule(); return; }
+  const removed = all[idx];
+  const plans = all.filter((p, i) => i !== idx);
+  if (!saveProfilePlans(profileId, plans)) {
+    showToast('Could not delete the plan on this device', 'error');
+    return;
+  }
+  _lastDeletedPlan = { plan: removed, profileId, at: Date.now() };
   renderSchedule();
-  showToast('Plan deleted');
+  showPlatformUndoBar('ih-undo-plan',
+    'Deleted ' + (removed.displayDate ? removed.displayDate + ' ' : '') + (removed.displayTime || 'class plan') + '.',
+    'undoDeleteScheduledPlan()', PLAN_UNDO_MS);
   // Auto-sync after delete
   if (typeof folderSync !== 'undefined' && folderSync.dirHandle) exportToFolder();
+}
+
+function undoDeleteScheduledPlan() {
+  const d = _lastDeletedPlan;
+  _lastDeletedPlan = null;
+  closePlatformUndoBar('ih-undo-plan');
+  if (!d) return;
+  const plans = getProfilePlans(d.profileId);
+  if (!plans.some(p => p.id === d.plan.id)) plans.push(d.plan);
+  plans.sort((a,b) => new Date(a.classDateTime) - new Date(b.classDateTime));
+  if (!saveProfilePlans(d.profileId, plans)) { showToast('Could not restore the plan', 'error'); return; }
+  renderSchedule();
+  showToast('Plan restored', 'success');
+  if (typeof folderSync !== 'undefined' && folderSync.dirHandle) exportToFolder();
+}
+
+// A small bar with one Undo button. Text goes in as text, never markup.
+function showPlatformUndoBar(id, text, action, ttlMs) {
+  closePlatformUndoBar(id);
+  const bar = document.createElement('div');
+  bar.id = id;
+  bar.className = 'ih-undo-bar';
+  bar.setAttribute('role', 'status');
+  const msg = document.createElement('span');
+  msg.textContent = text;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'ih-undo-btn';
+  btn.textContent = 'Undo';
+  btn.setAttribute('data-onclick', action);
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'ih-undo-close';
+  close.setAttribute('aria-label', 'Dismiss');
+  close.textContent = '\u2715';
+  close.setAttribute('data-onclick', 'closePlatformUndoBar(' + JSON.stringify(id) + ')');
+  bar.append(msg, btn, close);
+  document.body.appendChild(bar);
+  if (ttlMs) setTimeout(() => { if (bar.parentNode) bar.remove(); }, ttlMs);
+  return bar;
+}
+function closePlatformUndoBar(id) {
+  const b = document.getElementById(id);
+  if (b) b.remove();
 }
 
 
@@ -413,21 +553,43 @@ function buildExportData() {
   return data;
 }
 
-function exportPlansJSON() {
-  const data = buildExportData();
+function downloadJSONFile(data, fileName) {
   const json = JSON.stringify(data, null, 2);
   const blob = new Blob([json], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  const dateStr = new Date().toISOString().split('T')[0];
   a.href = url;
-  a.download = 'inspire_habits_plans_' + dateStr + '.json';
+  a.download = fileName;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function notePlansBackup() {
+  IHStore.set('hiit_last_plans_backup', new Date().toISOString());
+  if (typeof updateFolderSyncUI === 'function') updateFolderSyncUI();
+}
+
+function exportPlansJSON() {
+  const data = buildExportData();
+  const dateStr = new Date().toISOString().split('T')[0];
+  downloadJSONFile(data, 'inspire_habits_plans_' + dateStr + '.json');
+  notePlansBackup();
   const totalPlans = Object.keys(PROFILES).reduce((sum, id) => sum + getProfilePlans(id).length, 0);
   showToast('📥 Exported ' + totalPlans + ' plans to JSON', 'success');
+}
+
+// "Last backup: 3 days ago" for the schedule screen.
+function lastBackupText() {
+  const stamps = [IHStore.get('hiit_last_plans_backup'), IHStore.get('hiit_last_backup')]
+    .map(v => Date.parse(v || '')).filter(t => isFinite(t));
+  if (!stamps.length) return 'Never backed up on this device — use Export JSON to keep a copy.';
+  const t = Math.max(...stamps);
+  const days = Math.floor((Date.now() - t) / 86400000);
+  const when = days <= 0 ? 'today' : days === 1 ? 'yesterday' : days + ' days ago';
+  return 'Last backup: ' + when + ' (' + new Date(t).toLocaleDateString() + ')' +
+    (days >= 14 ? ' — time for a fresh one.' : '');
 }
 
 function triggerImportJSON() {
@@ -452,7 +614,7 @@ function triggerImportJSON() {
 }
 
 function previewImport(data, fileName) {
-  if (!data.profiles) {
+  if (!data || typeof data !== 'object' || !data.profiles || typeof data.profiles !== 'object') {
     showToast('Invalid file format — no profiles found', 'error');
     return;
   }
@@ -462,8 +624,8 @@ function previewImport(data, fileName) {
   let totalNew = 0;
   Object.entries(data.profiles).forEach(([id, profileData]) => {
     const prof = PROFILES[id];
-    if (!prof || !profileData.plans) return;
-    const incoming = profileData.plans.length;
+    if (!prof || !profileData || !Array.isArray(profileData.plans)) return;
+    const incoming = profileData.plans.filter(p => p && typeof p === 'object').length;
     const existing = getProfilePlans(id).length;
     summary.push({ id, prof, incoming, existing });
     totalNew += incoming;
@@ -479,16 +641,18 @@ function previewImport(data, fileName) {
   if (!modal) return;
 
   document.getElementById('import-file-name').textContent = fileName;
+  const exportedAt = data.exportedAt ? new Date(data.exportedAt) : null;
   document.getElementById('import-exported-at').textContent =
-    data.exportedAt ? new Date(data.exportedAt).toLocaleString() : 'Unknown';
+    exportedAt && isFinite(exportedAt) ? exportedAt.toLocaleString() : 'Unknown';
 
   const previewList = document.getElementById('import-preview-list');
   previewList.innerHTML = summary.map(s => `
     <div class="import-preview-row">
-      <span class="import-preview-prof">${s.prof.icon} ${s.prof.name}</span>
+      <span class="import-preview-prof">${_pEsc(s.prof.icon)} ${_pEsc(s.prof.name)}</span>
       <span class="import-preview-count">${s.incoming} plan${s.incoming!==1?'s':''} in file</span>
       <span class="import-preview-existing">${s.existing} existing</span>
-    </div>`).join('');
+    </div>`).join('') +
+    '<div class="import-preview-row import-preview-safety">Replace first saves a copy of your current plans, and can be undone.</div>';
 
   // Store data for confirm
   modal._importData = data;
@@ -500,6 +664,8 @@ function closeImportModal() {
   if (modal) { modal.style.display = 'none'; modal._importData = null; }
 }
 
+const PLANS_BEFORE_REPLACE_KEY = 'hiit_plans_before_replace';
+
 function confirmImport(mode) {
   // mode: 'merge' = add new, skip duplicates | 'replace' = overwrite all
   const modal = document.getElementById('import-preview-modal');
@@ -507,20 +673,37 @@ function confirmImport(mode) {
   const data = modal._importData;
   let imported = 0, skipped = 0;
 
+  if (mode === 'replace') {
+    // Safety copy first: kept on the device for Undo, and downloaded so it
+    // survives even if the browser's storage is wiped later.
+    const before = buildExportData();
+    before.note = 'Automatic copy made before Replace';
+    const kept = IHStore.setJSON(PLANS_BEFORE_REPLACE_KEY, before);
+    try {
+      downloadJSONFile(before, 'inspire_habits_plans_before_replace_' +
+        new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.json');
+    } catch (e) { /* the on-device copy is still there */ }
+    if (!kept) {
+      if (!confirm('This device could not keep an Undo copy (storage is full). ' +
+                   'A copy was downloaded instead. Replace anyway?')) return;
+    }
+  }
+
   Object.entries(data.profiles).forEach(([id, profileData]) => {
-    if (!PROFILES[id] || !profileData.plans) return;
+    if (!PROFILES[id] || !profileData || !Array.isArray(profileData.plans)) return;
+    const incomingPlans = profileData.plans.filter(p => p && typeof p === 'object');
     if (mode === 'replace') {
-      saveProfilePlans(id, profileData.plans);
-      imported += profileData.plans.length;
+      saveProfilePlans(id, incomingPlans);
+      imported += incomingPlans.length;
     } else {
       // Merge: add plans not already present (by id)
       const existing = getProfilePlans(id);
       const existingIds = new Set(existing.map(p => p.id));
-      const toAdd = profileData.plans.filter(p => !existingIds.has(p.id));
+      const toAdd = incomingPlans.filter(p => !existingIds.has(p.id));
       const merged = [...existing, ...toAdd].sort((a,b) => new Date(a.classDateTime) - new Date(b.classDateTime));
       saveProfilePlans(id, merged);
       imported += toAdd.length;
-      skipped += profileData.plans.length - toAdd.length;
+      skipped += incomingPlans.length - toAdd.length;
     }
   });
 
@@ -530,6 +713,22 @@ function confirmImport(mode) {
     ? '✅ Replaced all plans (' + imported + ' imported)'
     : '✅ Merged: ' + imported + ' added' + (skipped ? ', ' + skipped + ' duplicates skipped' : '');
   showToast(msg, 'success');
+  if (mode === 'replace') {
+    showPlatformUndoBar('ih-undo-import', 'Plans replaced. A copy of the old ones was downloaded.',
+      'undoReplaceImport()', 30000);
+  }
+}
+
+function undoReplaceImport() {
+  closePlatformUndoBar('ih-undo-import');
+  const before = IHStore.getJSON(PLANS_BEFORE_REPLACE_KEY, null);
+  if (!before || !before.profiles) { showToast('Nothing to undo', 'error'); return; }
+  Object.entries(before.profiles).forEach(([id, pd]) => {
+    if (PROFILES[id] && pd && Array.isArray(pd.plans)) saveProfilePlans(id, pd.plans);
+  });
+  renderSchedule();
+  showToast('Your previous plans are back', 'success');
+  if (typeof folderSync !== 'undefined' && folderSync.dirHandle) exportToFolder();
 }
 
 // ── FOLDER SYNC (File System Access API — Chrome/Edge) ────────
@@ -632,7 +831,7 @@ async function exportToFolder() {
     folderSync.lastExportName = fileName;
     const totalPlans = Object.keys(PROFILES).reduce((s,id)=>s+getProfilePlans(id).length,0);
     showToast('📂 Exported ' + totalPlans + ' plans → ' + folderSync.dirHandle.name + '/' + fileName, 'success');
-    updateFolderSyncUI();
+    notePlansBackup();
   } catch(e) {
     showToast('Export to folder failed: ' + e.message, 'error');
     exportPlansJSON(); // fallback
@@ -687,11 +886,11 @@ function showFolderFilePicker(files) {
     return `
       <div class="folder-file-row ${isLatest?'folder-file-latest':''}">
         <div class="folder-file-info">
-          <div class="folder-file-name">${f.name}${isLatest?' <span class="folder-file-new-badge">Latest</span>':''}</div>
-          <div class="folder-file-date">${dateStr}</div>
+          <div class="folder-file-name">${_pEsc(f.name)}${isLatest?' <span class="folder-file-new-badge">Latest</span>':''}</div>
+          <div class="folder-file-date">${_pEsc(dateStr)}</div>
         </div>
         <div class="folder-file-actions">
-          <button class="sched-load-btn" onclick="importFromFolderFile(${i})">📥 Import</button>
+          <button class="sched-load-btn" data-onclick="importFromFolderFile(${_pArg(i)})">📥 Import</button>
         </div>
       </div>`;
   }).join('');
@@ -758,6 +957,13 @@ function updateFolderSyncUI() {
     if (lastCheck) lastCheck.textContent = 'Last checked: ' + new Date(folderSync.lastCheckTime).toLocaleTimeString();
   }
 
+  const backupEl = document.getElementById('plans-last-backup');
+  if (backupEl) {
+    const txt = lastBackupText();
+    backupEl.textContent = txt;
+    backupEl.classList.toggle('stale', /^Never|fresh one/.test(txt));
+  }
+
   // Show/hide browser support warning
   const unsupported = document.getElementById('folder-unsupported-msg');
   if (unsupported) unsupported.style.display = folderSync.supported ? 'none' : 'block';
@@ -822,7 +1028,7 @@ function renderStudioStats() {
     const topMuscle = Object.entries(muscleCounts).sort((a,b)=>b[1]-a[1])[0];
 
     // Total participants taught
-    const totalParticipants = taught.reduce((s,p)=>s+(p.participants||0),0);
+    const totalParticipants = taught.reduce((s,p)=>s+(Number(p.participants)||0),0);
 
     // Most recent class
     const lastClass = taught.sort((a,b)=>new Date(b.classDateTime)-new Date(a.classDateTime))[0];
@@ -831,9 +1037,9 @@ function renderStudioStats() {
     card.className = 'studio-instructor-card studio-card-'+prof.color;
     card.innerHTML = `
       <div class="studio-card-header">
-        <span class="studio-card-icon">${prof.icon}</span>
+        <span class="studio-card-icon">${_pEsc(prof.icon)}</span>
         <div>
-          <div class="studio-card-name">${prof.name}</div>
+          <div class="studio-card-name">${_pEsc(prof.name)}</div>
           <div class="studio-card-role">Instructor</div>
         </div>
         <div class="studio-card-total">${plans.length}<span>plans</span></div>
@@ -853,9 +1059,9 @@ function renderStudioStats() {
         </div>
       </div>
       <div class="studio-card-details">
-        ${topStyle ? `<div class="studio-detail-row"><span class="studio-detail-label">Favourite Style</span><span class="studio-detail-val">${getStyleIcon(topStyle[0])} ${topStyle[0]} (${topStyle[1]}x)</span></div>` : ''}
-        ${topMuscle ? `<div class="studio-detail-row"><span class="studio-detail-label">Top Focus</span><span class="studio-detail-val">💪 ${topMuscle[0]} (${topMuscle[1]}x)</span></div>` : ''}
-        ${lastClass ? `<div class="studio-detail-row"><span class="studio-detail-label">Last Class</span><span class="studio-detail-val">${lastClass.displayDate} at ${lastClass.displayTime}</span></div>` : '<div class="studio-detail-row"><span class="studio-detail-label">Last Class</span><span class="studio-detail-val studio-no-data">No classes yet</span></div>'}
+        ${topStyle ? `<div class="studio-detail-row"><span class="studio-detail-label">Favourite Style</span><span class="studio-detail-val">${getStyleIcon(topStyle[0])} ${_pEsc(topStyle[0])} (${topStyle[1]}x)</span></div>` : ''}
+        ${topMuscle ? `<div class="studio-detail-row"><span class="studio-detail-label">Top Focus</span><span class="studio-detail-val">💪 ${_pEsc(topMuscle[0])} (${topMuscle[1]}x)</span></div>` : ''}
+        ${lastClass ? `<div class="studio-detail-row"><span class="studio-detail-label">Last Class</span><span class="studio-detail-val">${_pEsc(lastClass.displayDate)} at ${_pEsc(lastClass.displayTime)}</span></div>` : '<div class="studio-detail-row"><span class="studio-detail-label">Last Class</span><span class="studio-detail-val studio-no-data">No classes yet</span></div>'}
       </div>
     `;
     container.appendChild(card);
@@ -898,7 +1104,7 @@ function renderStudioSchedule() {
     const planDate = new Date(datePlans[0].classDateTime);
     const isPast = planDate < now;
     const isToday = planDate.toDateString() === now.toDateString();
-    dateHeader.innerHTML = `<span class="sched-date-label ${isToday?'sched-today':isPast?'sched-past':''}">${isToday?'📅 TODAY — ':isPast?'✓ ':'📅 '}${date}</span>`;
+    dateHeader.innerHTML = `<span class="sched-date-label ${isToday?'sched-today':isPast?'sched-past':''}">${isToday?'📅 TODAY — ':isPast?'✓ ':'📅 '}${_pEsc(date)}</span>`;
     container.appendChild(dateHeader);
 
     datePlans.forEach(plan => {
@@ -907,21 +1113,21 @@ function renderStudioSchedule() {
       card.className = `sched-card sched-card-${prof.color||'slate'} ${isPast?'sched-card-past':''}`;
       card.innerHTML = `
         <div class="sched-card-time">
-          <div class="sched-time">${plan.displayTime||'—'}</div>
+          <div class="sched-time">${_pEsc(plan.displayTime||'—')}</div>
           <div class="sched-instructor">
-            <span class="sched-instructor-icon">${prof.icon||'👤'}</span>
-            <span>${prof.name||plan.profileName}</span>
+            <span class="sched-instructor-icon">${_pEsc(prof.icon||'👤')}</span>
+            <span>${_pEsc(prof.name||plan.profileName)}</span>
           </div>
         </div>
         <div class="sched-card-info">
-          <div class="sched-workout-title">${getStyleIcon(plan.style)||''} ${plan.style} — ${plan.muscle}</div>
+          <div class="sched-workout-title">${getStyleIcon(plan.style)||''} ${_pEsc(plan.style)} — ${_pEsc(plan.muscle)}</div>
           <div class="sched-workout-meta">
-            <span class="sched-tag">${plan.duration} min</span>
-            <span class="sched-tag">${plan.participants} people</span>
-            <span class="sched-tag">${plan.exerciseCount} exercises</span>
-            <span class="sched-tag sched-diff">${plan.difficulty}</span>
+            <span class="sched-tag">${_pEsc(plan.duration)} min</span>
+            <span class="sched-tag">${_pEsc(plan.participants)} people</span>
+            <span class="sched-tag">${_pEsc(plan.exerciseCount)} exercises</span>
+            <span class="sched-tag sched-diff">${_pEsc(plan.difficulty)}</span>
           </div>
-          ${plan.notes?`<div class="sched-notes">${plan.notes}</div>`:''}
+          ${plan.notes?`<div class="sched-notes">${_pEsc(plan.notes)}</div>`:''}
         </div>`;
       container.appendChild(card);
     });

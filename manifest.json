@@ -2,10 +2,11 @@
   "name": "Inspire Habits",
   "short_name": "Inspire",
   "description": "HIIT class builder and live class timer for mixed-ability group training.",
+  "id": "./",
   "start_url": ".",
   "scope": ".",
   "display": "standalone",
-  "orientation": "portrait-primary",
+  "orientation": "any",
   "background_color": "#0d0d0f",
   "theme_color": "#0d0d0f",
   "icons": [

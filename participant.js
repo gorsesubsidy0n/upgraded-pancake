@@ -84,56 +84,63 @@
   // the plan can sit inside the existing payload untouched.
   const PHASE_CODES = ['get-ready', 'warmup', 'work', 'rest', 'cooldown'];
   const pad = (n, w) => { let s = n.toString(36); while (s.length < w) s = '0' + s; return s; };
+  const widthFor36 = n => { let w = 1; while (Math.pow(36, w) < n) w++; return w; };
+  // A plan that would not fit the original single-character name slot goes
+  // out in a "wide" form instead: two-character name refs, marked with a W
+  // prefix and carried in a payload field older phones never read, so an
+  // out-of-date phone shows the move list rather than a garbled clock.
+  const WIDE = 'W';
+  const MAX_PLAN_STEPS = 3000;
 
   function packPlan(seq) {
     if (!seq || !seq.length) return '';
-    const nameIdx = new Map(), tokenIdx = new Map(), order = [];
+    const nameIdx = new Map();
+    seq.forEach(s => { const nm = clean(s.name); if (nm && !nameIdx.has(nm)) nameIdx.set(nm, nameIdx.size); });
+    if (nameIdx.size > 36 * 36) return '';
+    const nw = nameIdx.size > 36 ? 2 : 1;
+    const tokenIdx = new Map(), order = [];
     seq.forEach(s => {
       const dur = Math.min(1295, Math.max(0, Math.round(s.duration || 0)));
       let code = PHASE_CODES.indexOf(s.phase);
       if (code < 0) code = 2;
       const nm = clean(s.name);
-      let ref = '-';
-      if (nm) {
-        if (!nameIdx.has(nm)) nameIdx.set(nm, nameIdx.size);
-        ref = pad(nameIdx.get(nm), 1);
-      }
+      const ref = nm ? pad(nameIdx.get(nm), nw) : '-'.repeat(nw);
       const tok = pad(dur, 2) + code + ref;
       if (!tokenIdx.has(tok)) tokenIdx.set(tok, tokenIdx.size);
       order.push(tokenIdx.get(tok));
     });
-    // A name index past base36 would not fit the single-char slot.
-    if (nameIdx.size > 36) return '';
-    const w = tokenIdx.size > 36 ? 2 : 1;
-    return [w, [...tokenIdx.keys()].join(''),
+    const w = widthFor36(tokenIdx.size);
+    return (nw === 2 ? WIDE : '') + [w, [...tokenIdx.keys()].join(''),
             order.map(i => pad(i, w)).join(''),
             [...nameIdx.keys()].join('~')].join('!');
   }
 
   function unpackPlan(raw) {
     if (!raw) return [];
+    let s = String(raw), nw = 1;
+    if (s.charAt(0) === WIDE) { nw = 2; s = s.slice(1); }
+    const tl = 3 + nw;
     // Split on the first three separators only — the trailing name list is
     // free-form and legitimately contains "!" (e.g. "Get Ready!").
-    const s = String(raw);
     const i1 = s.indexOf('!');
     const i2 = s.indexOf('!', i1 + 1);
     const i3 = s.indexOf('!', i2 + 1);
     if (i1 < 0 || i2 < 0 || i3 < 0) return [];
-    const w = parseInt(s.slice(0, i1), 10) || 1;
+    const w = Math.min(4, Math.max(1, parseInt(s.slice(0, i1), 10) || 1));
     const dictRaw = s.slice(i1 + 1, i2);
     const idx = s.slice(i2 + 1, i3);
     const names = s.slice(i3 + 1).split('~');
     const dict = [];
-    for (let i = 0; i + 4 <= dictRaw.length; i += 4) dict.push(dictRaw.substr(i, 4));
+    for (let i = 0; i + tl <= dictRaw.length; i += tl) dict.push(dictRaw.substr(i, tl));
     const out = [];
-    for (let i = 0; i + w <= idx.length; i += w) {
+    for (let i = 0; i + w <= idx.length && out.length < MAX_PLAN_STEPS; i += w) {
       const tok = dict[parseInt(idx.substr(i, w), 36)];
       if (!tok) continue;
-      const ref = tok.charAt(3);
+      const ref = tok.substr(3, nw);
       out.push({
         duration: parseInt(tok.substr(0, 2), 36) || 0,
         phase: PHASE_CODES[parseInt(tok.charAt(2), 10)] || 'work',
-        name: ref === '-' ? '' : (names[parseInt(ref, 36)] || ''),
+        name: ref.charAt(0) === '-' ? '' : (names[parseInt(ref, 36)] || ''),
       });
     }
     let t = 0;
@@ -141,45 +148,84 @@
     return out;
   }
 
+  // Coaching detail for each move on the clock — prop, form cue and the
+  // easier / harder options — so a phone can show more than a bare name.
+  //   info → name^prop^cue^easier^harder~…
+  const INFO_LIMITS = [60, 40, 90, 40, 40];
+  function packInfo(map) {
+    return Object.keys(map || {}).map(n => {
+      const i = map[n] || {};
+      const f = [n, i.prop, i.cue, i.easier, i.harder].map((v, k) => clean(v).slice(0, INFO_LIMITS[k]));
+      return f.slice(1).some(Boolean) ? f.join('^') : '';
+    }).filter(Boolean).join('~');
+  }
+  function unpackInfo(raw) {
+    const out = Object.create(null);
+    String(raw || '').split('~').slice(0, 200).forEach(chunk => {
+      const f = chunk.split('^');
+      if (!f[0]) return;
+      out[f[0]] = { prop: f[1] || '', cue: f[2] || '', easier: f[3] || '', harder: f[4] || '' };
+    });
+    return out;
+  }
+
+  // Counts in a link are clamped: a hand-edited link with rounds=1e9 would
+  // otherwise freeze the phone building a billion-row list.
+  const clampInt = (v, lo, hi, dflt) => {
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt;
+  };
+
   // v2 adds main-block rounds and a Core Burner block. v3 adds the time cap
   // for the whole main block. v4 adds the run-length encoded class plan and
   // the wall-clock time step 0 began, which is what lets a phone mirror the
   // room's clock. Older links are still read, so a code scanned before an
   // update keeps working for that class.
+  // Still v4, with optional fields appended — older phones simply ignore
+  // them: 15 = seconds into the class when the instructor paused (0 = the
+  // clock is running), 16 = a wide plan (see packPlan), 17 = move info.
   function encodePayload(p) {
     const b = p.burner || {};
-    return b64urlEncode([
+    const plan = p.plan || '';
+    const wide = plan.charAt(0) === WIDE;
+    const fields = [
       '4', p.mode, p.sid, clean(p.title), clean(p.meta),
       String(p.rounds || 1), packItems(p.items),
       String(b.rounds || 0), String(b.work || 0), String(b.rest || 0), packItems(b.items),
       String(p.cap || 0), (p.rungs || []).join(','),
-      p.plan || '', String(p.t0 || 0),
-    ].join('|'));
+      wide ? '' : plan, String(p.t0 || 0),
+    ];
+    const extra = [String(p.paused || 0), wide ? plan : '', p.info ? packInfo(p.info) : ''];
+    while (extra.length && (extra[extra.length - 1] === '' || extra[extra.length - 1] === '0')) extra.pop();
+    return b64urlEncode(fields.concat(extra).join('|'));
   }
 
   function decodePayload(raw) {
     const parts = b64urlDecode(raw).split('|');
     if (parts[0] === '1') {
       return { mode: parts[1], sid: parts[2], title: parts[3], meta: parts[4],
-               rounds: 1, items: unpackItems(parts[5]), burner: null, cap: 0, rungs: null,
-               plan: [], t0: 0 };
+               rounds: 1, items: unpackItems(parts[5]).slice(0, 100), burner: null, cap: 0, rungs: null,
+               plan: [], t0: 0, paused: 0, info: {} };
     }
     if (['2', '3', '4'].indexOf(parts[0]) < 0) throw new Error('unsupported payload version');
-    const bRounds = parseInt(parts[7], 10) || 0;
-    const bItems = unpackItems(parts[10]);
+    const bRounds = clampInt(parts[7], 0, 50, 0);
+    const bItems = unpackItems(parts[10]).slice(0, 50);
     const mode = parts[1];
-    const rungs = (parts[12] || '').split(',').map(n => parseInt(n, 10)).filter(n => n > 0);
+    const rungs = (parts[12] || '').split(',').slice(0, 50).map(n => parseInt(n, 10))
+      .filter(n => n > 0).map(n => Math.min(999, n));
     return {
-      mode, sid: parts[2], title: parts[3], meta: parts[4],
-      rounds: parseInt(parts[5], 10) || 1,
-      items: unpackItems(parts[6]),
-      cap: parseInt(parts[11], 10) || 0,
+      mode, sid: String(parts[2] || '').replace(/[^a-z0-9]/gi, '').slice(0, 24), title: parts[3], meta: parts[4],
+      rounds: clampInt(parts[5], 1, 50, 1),
+      items: unpackItems(parts[6]).slice(0, 100),
+      cap: clampInt(parts[11], 0, 86400, 0),
       rungs: rungs.length ? rungs : (RUNG_FALLBACK[mode] || null),
-      plan: unpackPlan(parts[13] || ''),
-      t0: parseInt(parts[14], 10) || 0,
+      plan: unpackPlan(parts[13] || parts[16] || ''),
+      t0: clampInt(parts[14], 0, 8.64e15, 0),
+      paused: clampInt(parts[15], 0, 86400, 0),
+      info: unpackInfo(parts[17]),
       burner: (bRounds && bItems.length)
-        ? { rounds: bRounds, work: parseInt(parts[8], 10) || 0,
-            rest: parseInt(parts[9], 10) || 0, items: bItems }
+        ? { rounds: bRounds, work: clampInt(parts[8], 0, 3600, 0),
+            rest: clampInt(parts[9], 0, 3600, 0), items: bItems }
         : null,
     };
   }
@@ -328,25 +374,92 @@
     // move in order, so the separate item list is dropped to keep the QR
     // small — renderClockFollow rebuilds the list from the plan.
     const clockDriven = !selfPaced && mode !== 'b';
-    const plan = clockDriven ? packPlan(currentSequence()) : '';
+    const seq = clockDriven ? currentSequence() : [];
+    const plan = clockDriven ? packPlan(seq) : '';
+    const paused = clockDriven ? classPausedAt() : 0;
 
     return {
-      mode, meta, rounds, burner, cap, rungs, plan,
+      mode, meta, rounds: Math.min(50, Math.max(1, rounds)), burner, cap, rungs, plan,
       items: (clockDriven && plan) ? [] : items,
       t0: clockDriven ? classStartEpoch() : 0,
-      sid: (w.athleteSid || (w.athleteSid = Date.now().toString(36) + Math.random().toString(36).slice(2, 6))),
+      paused,
+      planMissing: clockDriven && !plan && seq.length > 0,
+      info: plan ? moveInfo(w, seq) : null,
+      sid: workoutSid(w),
       title: (w.styleCfg && w.styleCfg.name ? w.styleCfg.name : w.style) + ' · ' + (w.muscle || 'full') + ' focus',
     };
+  }
+
+  const workoutSid = w => (w.athleteSid ||
+    (w.athleteSid = Date.now().toString(36) + Math.random().toString(36).slice(2, 6)));
+
+  // Prop and form cue come from the timer steps; the easier / harder options
+  // from the plan itself. Only moves that appear on the clock are sent.
+  function moveInfo(w, seq) {
+    const out = {};
+    const byName = {};
+    [].concat(w.exercises || [], (w.coreBurner && w.coreBurner.exercises) || [])
+      .forEach(ex => { if (ex && ex.name && !byName[ex.name]) byName[ex.name] = ex; });
+    (seq || []).forEach(s => {
+      const nm = clean(s.name);
+      if (!nm || out[nm] || (s.phase !== 'work' && s.phase !== 'warmup' && s.phase !== 'cooldown')) return;
+      const ex = byName[s.name] || {};
+      out[nm] = { prop: s.prop || '', cue: s.cue || ex.cue || '', easier: ex.easier || '', harder: ex.harder || '' };
+    });
+    return out;
+  }
+
+  // The same detail rebuilt from this phone's copy of the exercise library,
+  // for links that left it out. Custom moves and edited cues aren't in the
+  // library, so those show without detail.
+  function libraryInfo(name) {
+    try {
+      const hit = name && typeof exFind === 'function' ? exFind(name) : null;
+      if (hit && hit.ex) {
+        const ex = hit.ex;
+        const prop = (typeof PROP_LABELS !== 'undefined' && PROP_LABELS[hit.group]) || '';
+        return (prop || ex.cue || ex.easier || ex.harder)
+          ? { prop, cue: ex.cue || '', easier: ex.easier || '', harder: ex.harder || '' } : null;
+      }
+      const pools = [].concat(typeof WARMUP_POOL !== 'undefined' ? WARMUP_POOL : [],
+                              typeof COOLDOWN_POOL !== 'undefined' ? COOLDOWN_POOL : []);
+      const p = pools.find(x => x && x.name === name);
+      return p && p.note ? { prop: p.note, cue: '', easier: '', harder: '' } : null;
+    } catch (e) { return null; }
+  }
+
+  // The live timer, but only when it belongs to the class on screen. A timer
+  // left over from an earlier class must never leak into a new link
+  // (app.js stamps workoutRef whenever it builds a live sequence).
+  function liveTimer() {
+    try {
+      const t = state.timer;
+      if (!t || !t.sequence || !t.sequence.length) return null;
+      if (!t.workoutRef || t.workoutRef !== state.workout) return null;
+      return t;
+    } catch (e) { return null; }
   }
 
   // The live sequence when class is running, otherwise the plan as it would
   // be built — so a code scanned before Go Live still shows the right class.
   function currentSequence() {
     try {
-      const live = state.timer && state.timer.sequence;
-      if (live && live.length) return live;
+      const t = liveTimer();
+      if (t) return t.sequence;
       return buildTimerSequence();
     } catch (e) { return []; }
+  }
+
+  // Seconds of the class already behind the live timer. While running, the
+  // step deadline is more precise than the whole-second display.
+  function liveElapsed(t) {
+    const i = Math.max(0, Math.min(t.current || 0, t.sequence.length - 1));
+    let elapsed = 0;
+    for (let k = 0; k < i; k++) elapsed += Math.round(t.sequence[k].duration || 0);
+    const dur = Math.round(t.sequence[i].duration || 0);
+    let left = Math.max(0, t.seconds || 0);
+    if (t.isRunning && t.deadline) left = Math.max(0, (t.deadline - Date.now()) / 1000);
+    return elapsed + Math.max(0, dur - Math.min(dur, left));
   }
 
   // Wall-clock time step 0 started, derived by rewinding through the steps
@@ -354,15 +467,47 @@
   // happened before the code was shown. 0 means "not live yet".
   function classStartEpoch() {
     try {
-      const t = state.timer;
-      if (!t || !t.sequence || !t.sequence.length) return 0;
-      const i = Math.max(0, Math.min(t.current || 0, t.sequence.length - 1));
-      let elapsed = 0;
-      for (let k = 0; k < i; k++) elapsed += Math.round(t.sequence[k].duration || 0);
-      elapsed += Math.round(t.sequence[i].duration || 0) - Math.max(0, Math.round(t.seconds || 0));
-      return Date.now() - elapsed * 1000;
+      const t = liveTimer();
+      if (!t) return 0;
+      const e = liveElapsed(t);
+      if (!t.isRunning && !t._started && e <= 0) return 0;
+      return Math.round(Date.now() - e * 1000);
     } catch (e) { return 0; }
   }
+
+  // Seconds into the class when the instructor paused, or 0 while the clock
+  // runs. A link made during a pause carries this so phones freeze at the
+  // same spot instead of racing ahead of the room.
+  function classPausedAt() {
+    try {
+      const t = liveTimer();
+      if (!t || t.isRunning) return 0;
+      const e = liveElapsed(t);
+      if (!t._started && e <= 0) return 0;
+      return Math.max(1, Math.round(e));
+    } catch (e) { return 0; }
+  }
+
+  // Remembered per class, so the "send a fresh link" prompt after a pause
+  // still appears once the instructor has reloaded or resumed the class.
+  const SHARED_KEY = 'ih_link_shared_v1';
+  function markLinkShared() {
+    window.__ihLinkShared = true;
+    try {
+      const w = currentWorkout();
+      if (w) IHStore.setJSON(SHARED_KEY, { sid: workoutSid(w), at: Date.now() });
+    } catch (e) {}
+  }
+  window.ihMarkLinkShared = markLinkShared;
+  window.ihLinkWasShared = function () {
+    if (window.__ihLinkShared) return true;
+    try {
+      const w = currentWorkout();
+      const rec = IHStore.getJSON(SHARED_KEY, null);
+      return !!(w && rec && w.athleteSid && rec.sid === w.athleteSid &&
+        Date.now() - rec.at < 12 * 3600 * 1000);
+    } catch (e) { return false; }
+  };
 
   /* ── Where the QR code points ──────────────────────────────────────────
      A link to the instructor's laptop only resolves inside the building.
@@ -454,6 +599,17 @@
     return b.url + '#' + HASH_KEY + '=' + encodePayload(payload) + linkTokenSuffix();
   }
 
+  // The link for the scan code. A clock class's link is mostly per-move
+  // coaching text, which makes a code too dense to read off a screen, so
+  // the code leaves it out when it has to; the phone fills it back in from
+  // its own exercise library (see libraryInfo). Copied links keep it all.
+  const SCAN_MAX_VERSION = 25;
+  function scanLink(payload, base, url) {
+    const full = window.IHQR && IHQR.encode(url);
+    if (!payload.info || (full && full.version <= SCAN_MAX_VERSION)) return url;
+    return athleteUrl(Object.assign({}, payload, { info: null }), base);
+  }
+
   // The access gate ships a token that unlocks the athlete side straight
   // from the link, so nobody types a code while the class waits. Absent
   // when the gate isn't loaded, which keeps this file usable on its own.
@@ -495,9 +651,9 @@
       '<input id="qr-host-input" type="url" inputmode="url" spellcheck="false" ' +
         'placeholder="https://yourname.github.io/inspire-habits/" value="' + esc(saved) + '">' +
       '<div class="qr-host-actions">' +
-        '<button class="qr-btn primary" onclick="__ihSaveHost()">Save</button>' +
-        (saved ? '<button class="qr-btn" onclick="__ihClearHost()">Remove</button>' : '') +
-        '<button class="qr-btn" onclick="__ihToggleHostForm()">Cancel</button>' +
+        '<button class="qr-btn primary" data-onclick="__ihSaveHost()">Save</button>' +
+        (saved ? '<button class="qr-btn" data-onclick="__ihClearHost()">Remove</button>' : '') +
+        '<button class="qr-btn" data-onclick="__ihToggleHostForm()">Cancel</button>' +
       '</div>' +
       '<div class="qr-host-help">Put this folder on any free static host — GitHub Pages, a Netlify drop, ' +
         'Cloudflare Pages — then paste the address here once. The class itself travels in the ' +
@@ -514,7 +670,7 @@
         '<div class="qr-reach-text"><b>' + r.head + '</b>' +
           (base.label ? ' · <span class="qr-reach-host">' + esc(base.label) + '</span>' : '') +
           '<div>' + r.msg + '</div></div>' +
-        '<button class="qr-btn tiny" onclick="__ihToggleHostForm()">' +
+        '<button class="qr-btn tiny" data-onclick="__ihToggleHostForm()">' +
           (savedHost() ? 'Change' : 'Set up') + '</button>' +
       '</div>' +
       (hostFormOpen ? hostFormHtml() : '') +
@@ -530,9 +686,29 @@
         'or any class with a Core Burner.');
       return;
     }
+    markLinkShared();
     // Ask the server which address phones should use before drawing, so a
     // code generated on localhost still points somewhere reachable.
     loadPhoneOrigin(() => paintClassQR(payload));
+  };
+
+  // One tap from the "you paused" bar: rebuild the link at the room's
+  // current position and put it on the clipboard, without opening a dialog.
+  // Falls back to the panel when the clipboard is unavailable (plain http).
+  window.ihCopyFreshClassLink = function () {
+    const w = currentWorkout();
+    const payload = w && classPayloadFromWorkout(w);
+    if (!payload) { window.showClassQR(); return; }
+    markLinkShared();
+    const url = athleteUrl(payload);
+    if (!url || athleteBase().kind === 'loopback' || !navigator.clipboard || !navigator.clipboard.writeText) {
+      window.showClassQR(); return;
+    }
+    navigator.clipboard.writeText(url).then(() => {
+      if (window.showToast) showToast(payload.paused
+        ? '🔗 Paused link copied — phones freeze here until athletes tap ▶'
+        : '🔗 Fresh link copied — paste it into the class chat');
+    }, () => window.showClassQR());
   };
 
   function paintClassQR(payload) {
@@ -542,9 +718,9 @@
     const body = document.getElementById('qr-modal-body');
     if (!modal || !body) return;
 
-    // The link is the whole panel now. A QR code of a class plan runs to a
-    // few hundred modules, which is too fine for a phone camera to read off
-    // a laptop screen, so it was more trouble than it was worth.
+    // A class plan travels inside the link, so its scan code is dense: the
+    // panel shows a small copy and a tap puts it full screen, where any
+    // phone camera can read it off a laptop or TV. The link stays for chat.
     let linkBlock;
     if (!url) {
       linkBlock = '<div class="qr-error">No address to share yet.<br>' +
@@ -555,19 +731,33 @@
         'phone can open.<br>Set up a published copy below, or start the app ' +
         'with <code>node serve.js</code>.</div>' +
         '<div class="qr-url-label">Works on this computer only:' +
-          '<button class="qr-btn tiny" onclick="__ihCopyLink()">Copy</button></div>' +
+          '<button class="qr-btn tiny" data-onclick="__ihCopyLink()">Copy</button></div>' +
         '<div class="qr-url" id="qr-url">' + esc(url) + '</div>';
     } else {
       linkBlock =
+        (window.IHQR ? IHQR.panelHtml(scanLink(payload, base, url), 'qr-scan-url',
+          'Athletes scan this with their phone camera') : '') +
         '<div class="qr-link-box">' +
           '<div class="qr-link-label">Send this link to the class</div>' +
           '<div class="qr-url" id="qr-url">' + esc(url) + '</div>' +
-          '<button class="qr-btn qr-copy-big" onclick="__ihCopyLink()">' +
+          '<button class="qr-btn qr-copy-big" data-onclick="__ihCopyLink()">' +
             '📋 Copy link</button>' +
           '<div class="qr-link-hint">Paste it into your class group chat, or ' +
             'text it to anyone who arrives late. It opens straight on their ' +
-            'phone — no code to type.</div>' +
+            'phone — no code to type.<br><b>Paused or skipped a move?</b> Copy ' +
+            'the link again after you resume. Phones that open it re-align ' +
+            'to the room automatically.</div>' +
         '</div>';
+    }
+
+    if (url && payload.paused) {
+      linkBlock += '<div class="qr-link-hint qr-warn-line">⏸ The class is paused, so this link ' +
+        'freezes phones at ' + fmtClock(payload.paused * 1000) + ' into the class. Athletes tap ▶ when you ' +
+        'resume — or copy the link again once you are running.</div>';
+    }
+    if (url && payload.planMissing) {
+      linkBlock += '<div class="qr-link-hint qr-warn-line">⚠️ This class is too long to carry the ' +
+        'room clock in a link, so phones get the move list without the live timer.</div>';
     }
 
     const copy = MODE_COPY[payload.mode] || MODE_COPY.h;
@@ -666,7 +856,52 @@
 
   let cls = null, me = null, prog = null, rawPayload = '', tickHandle = null, wakeLock = null;
 
-  function persist() { saveProgress(cls.sid, me.uid, prog); }
+  function persist() { saveProgress(cls.sid, me.uid, prog); trackBest(); }
+
+  // ── Personal bests ───────────────────────────────────────────────────
+  // Private to the phone, like the rest of the athlete's progress. A class
+  // is matched by mode + title, so "Friday AMRAP" compares with last Friday.
+  const bestKey = () => 'ih_athlete_best_' + me.uid;
+  const bestClassKey = () => cls.mode + ':' + String(cls.title || '').toLowerCase().slice(0, 60);
+  function currentTotals() {
+    const rounds = (prog.rounds || []).length;
+    const reps = Object.values(prog.reps || {}).reduce((s, v) => s + (parseInt(v, 10) || 0), 0);
+    return { rounds: rounds, reps: reps, score: rounds * 10000 + reps };
+  }
+  function getBest() {
+    const all = IHStore.getJSON(bestKey(), {}) || {};
+    return all[bestClassKey()] || null;
+  }
+  function trackBest() {
+    if (!me) return;
+    const t = currentTotals();
+    if (t.score <= 0) return;
+    const all = IHStore.getJSON(bestKey(), {}) || {};
+    const k = bestClassKey(), best = all[k];
+    if (best && t.score <= best.score) return;
+    const beatOlder = best && best.sid !== cls.sid;
+    all[k] = { score: t.score, rounds: t.rounds, reps: t.reps, sid: cls.sid, at: Date.now(),
+               prev: beatOlder ? { rounds: best.rounds, reps: best.reps } : (best && best.prev) || null };
+    const keys = Object.keys(all);
+    if (keys.length > 40) {
+      keys.sort((a, b) => all[a].at - all[b].at).slice(0, keys.length - 40).forEach(x => delete all[x]);
+    }
+    IHStore.setJSON(bestKey(), all);
+    if (beatOlder && window.showToast) showToast('🏅 New personal best!', 'success');
+  }
+  function renderBest() {
+    const b = getBest();
+    if (!b) return '';
+    const fmt = x => (cls.mode === 'a' ? x.rounds + ' round' + (x.rounds === 1 ? '' : 's') +
+      (x.reps ? ' + ' + x.reps + ' reps' : '') : x.reps + ' reps');
+    const t = currentTotals();
+    const isNow = b.sid === cls.sid && t.score >= b.score;
+    return '<div class="ath-card ath-best">' +
+      '<div class="ath-best-title">🏅 Personal best for this class</div>' +
+      '<div class="ath-best-val">' + esc(fmt(b)) + '</div>' +
+      (isNow && b.prev ? '<div class="ath-best-sub">Beat your previous ' + esc(fmt(b.prev)) + '</div>' : '') +
+      '</div>';
+  }
 
   // 100 Reps used to be a checklist. Anyone who scanned before the update and
   // is mid-class keeps their progress: each ticked box becomes a full count.
@@ -691,15 +926,59 @@
       '&' + UID_KEY + '=' + encodeURIComponent(uid);
     try { history.replaceState(null, '', location.href.split('#')[0] + hash); }
     catch (e) { try { location.hash = hash.slice(1); } catch (e2) {} }
+    rememberLastClass();
+    rememberSidUid(cls.sid, uid);
+  }
+
+  // The installed app opens on its start URL, not on the link, so the last
+  // class is kept for a "Reopen last class" button on the empty screen.
+  function rememberLastClass() {
+    try {
+      localStorage.setItem('ih_last_class_hash', JSON.stringify({ hash: location.hash, at: Date.now() }));
+    } catch (e) {}
+  }
+
+  // A re-sync link sent mid-class has no &u=, so the phone remembers who it
+  // was for each class and goes straight back to that athlete's page.
+  const SID_UID_KEY = 'ih_athlete_sid_uid_v1';
+  function rememberSidUid(sid, uid) {
+    if (!sid || !uid) return;
+    try {
+      const map = IHStore.getJSON(SID_UID_KEY, {}) || {};
+      delete map[sid];
+      map[sid] = uid;
+      const keys = Object.keys(map);
+      keys.slice(0, Math.max(0, keys.length - 30)).forEach(k => delete map[k]);
+      IHStore.setJSON(SID_UID_KEY, map);
+    } catch (e) {}
+  }
+  function uidForSid(sid) {
+    try {
+      const map = IHStore.getJSON(SID_UID_KEY, {}) || {};
+      const uid = map[sid];
+      return (typeof uid === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(uid)) ? uid : '';
+    } catch (e) { return ''; }
   }
 
   function identify(uid) {
     if (tickHandle) { clearInterval(tickHandle); tickHandle = null; }
     me = { uid, name: displayName(uid) };
     prog = migrateProgress(loadProgress(cls.sid, uid));
+    // A fresh link carries a new class start time (or pause point) that
+    // already accounts for anything the room did since. Whatever this phone
+    // did by hand — nudges, "start with the class", resuming a pause — was
+    // a workaround for an older link, so drop it and trust the new one.
+    const linkId = cls.paused ? 'p' + cls.paused + '@' + cls.t0 : (cls.t0 || 0);
+    if (linkId && prog.t0seen !== linkId) {
+      prog.syncOffset = 0;
+      prog.classStart = 0;
+      prog.pausedAt = cls.paused || 0;
+      prog.t0seen = linkId;
+      persist();
+    }
     writeUidToUrl(uid);
     render();
-    requestWake();
+    if (!classIsOver()) requestWake();
   }
 
   /* The class link is one code for the whole room, so the phone asks who is
@@ -1069,25 +1348,45 @@
   const planTotal = () => (cls.plan || []).reduce((s, st) => s + st.duration, 0);
 
   // Seconds into the class right now, including any manual re-sync nudge.
+  // A link made while the room was paused stays frozen at that point until
+  // the athlete taps "the room has resumed". null = no start time at all.
+  const isFrozen = () => !!(prog && prog.pausedAt && !prog.classStart);
   function planElapsed() {
+    if (isFrozen()) return prog.pausedAt - (prog.syncOffset || 0);
     const base = prog.classStart || cls.t0 || 0;
-    if (!base) return -1;
+    if (!base) return null;
     return Math.floor((Date.now() - base) / 1000) - (prog.syncOffset || 0);
   }
 
   function planPosition() {
     const plan = cls.plan || [];
     const e = planElapsed();
-    if (e < 0) return null;
+    if (e === null || !plan.length) return null;
     const total = planTotal();
+    // A phone whose clock runs a little behind the laptop's sees a start
+    // time in the future; count down to it rather than showing nothing.
+    if (e < 0) return { pending: true, idx: 0, step: plan[0], left: -e, elapsed: e, total };
     if (e >= total) return { done: true, idx: plan.length - 1, left: 0, elapsed: e, total };
     let idx = 0;
     for (let i = 0; i < plan.length; i++) {
       if (e < plan[i].start + plan[i].duration) { idx = i; break; }
     }
     const st = plan[idx];
-    return { done: false, idx, step: st, left: st.start + st.duration - e, elapsed: e, total };
+    return { done: false, paused: isFrozen(), idx, step: st, left: st.start + st.duration - e, elapsed: e, total };
   }
+
+  const posKind = pos => !pos ? 'none' : pos.pending ? 'pending' : pos.done ? 'done'
+    : pos.paused ? 'paused' : 'live';
+
+  // True once there is nothing left to follow, so the screen may sleep.
+  function classIsOver() {
+    if (!cls || !prog) return false;
+    if ((cls.plan || []).length) { const p = planPosition(); return !!(p && p.done); }
+    if (SELF_PACED_MODES[cls.mode]) return remainingMs() === 0;
+    return false;
+  }
+
+  const isMovePhase = ph => ph === 'work' || ph === 'warmup' || ph === 'cooldown';
 
   // The next *different* move. Tabata repeats one exercise for eight rounds,
   // so "next" must skip past the repeats or it just echoes the current move.
@@ -1095,43 +1394,92 @@
     const plan = cls.plan || [];
     const cur = plan[from] ? plan[from].name : '';
     for (let i = from + 1; i < plan.length; i++) {
-      if (plan[i].name && plan[i].phase !== 'rest' && plan[i].name !== cur) return plan[i];
+      if (plan[i].name && plan[i].phase !== 'rest' && plan[i].phase !== 'get-ready' &&
+          plan[i].name !== cur) return plan[i];
     }
     return null;
+  }
+
+  // The move an athlete should be thinking about: the one they are doing,
+  // or — while resting or getting ready — the one about to start.
+  function targetIdx(idx) {
+    const plan = cls.plan || [];
+    if (plan[idx] && isMovePhase(plan[idx].phase) && plan[idx].name) return idx;
+    for (let i = idx + 1; i < plan.length; i++) if (isMovePhase(plan[i].phase) && plan[i].name) return i;
+    return -1;
+  }
+
+  // "Set 3 of 8" — how many times this move has come up so far, out of how
+  // many times it appears in the class. Cached per plan.
+  let occCache = null;
+  function occurrences() {
+    if (occCache) return occCache;
+    const plan = cls.plan || [], seen = {}, at = [];
+    plan.forEach((s, i) => {
+      if (!s.name || !isMovePhase(s.phase)) return;
+      seen[s.name] = (seen[s.name] || 0) + 1;
+      at[i] = seen[s.name];
+    });
+    occCache = { at, total: seen };
+    return occCache;
+  }
+  function setLabel(ti) {
+    const plan = cls.plan || [];
+    if (ti < 0 || !plan[ti] || plan[ti].phase !== 'work') return '';
+    const o = occurrences();
+    const n = o.total[plan[ti].name] || 0;
+    return n > 1 ? 'Set ' + o.at[ti] + ' of ' + n : '';
+  }
+
+  // Prop, form cue and easier / harder options for the target move. A
+  // scanned link may leave these out, so fall back to the exercise library.
+  function detailHtml(ti) {
+    const plan = cls.plan || [];
+    const st = plan[ti];
+    const info = st ? ((cls.info && cls.info[st.name]) || libraryInfo(st.name)) : null;
+    if (!info) return '';
+    return (info.prop ? '<div class="ath-cd-prop">🏋️ ' + esc(info.prop) + '</div>' : '') +
+      (info.cue ? '<div class="ath-cd-cue">💡 ' + esc(info.cue) + '</div>' : '') +
+      ((info.easier || info.harder) ? '<div class="ath-cd-opts">' +
+        (info.easier ? '<span class="ath-cd-easier"><b>Easier</b> ' + esc(info.easier) + '</span>' : '') +
+        (info.harder ? '<span class="ath-cd-harder"><b>Harder</b> ' + esc(info.harder) + '</span>' : '') +
+      '</div>' : '');
   }
 
   // One place that decides what the clock card says, so the initial render
   // and the per-second tick can never disagree.
   function clockFace(pos) {
+    const plan = cls.plan || [];
     const st = pos.step;
-    const nx = nextWorkStep(pos.idx);
-    // Rest steps carry no name of their own; what an athlete wants to see
-    // while resting is the move they are about to do.
-    const now = st.name || (nx ? nx.name : '—');
-    const after = st.name ? nx : nextWorkStep(pos.idx + lookaheadFrom(pos.idx));
+    const ti = targetIdx(pos.idx);
+    const target = ti >= 0 ? plan[ti] : null;
+    const resting = !isMovePhase(st.phase);
+    const nx = nextWorkStep(ti >= 0 ? ti : pos.idx);
+    const set = setLabel(ti);
     return {
-      phase: PHASE_LABEL[st.phase] || 'Work',
+      phase: (pos.paused ? '⏸ Paused · ' : '') + (PHASE_LABEL[st.phase] || 'Work') +
+        (resting && target ? ' · up next' : ''),
       time: mmss(pos.left),
-      now,
-      next: st.name
-        ? (nx ? 'Next: ' + nx.name : 'Last one — finish strong')
-        : 'Coming up — get set',
+      now: target ? target.name : (st.name || '—'),
+      round: set,
+      next: resting
+        ? (target ? 'Coming up — get set' : 'Almost done')
+        : (nx ? 'Next: ' + nx.name : 'Last one — finish strong'),
       pct: Math.max(0, Math.min(100, Math.round(pos.elapsed / pos.total * 100))),
       totalLeft: mmss(pos.total - pos.elapsed) + ' left in class',
+      ti,
+      say: (PHASE_LABEL[st.phase] || 'Work') + (target ? (resting ? '. Up next: ' : ': ') + target.name : '') +
+        (set ? ', ' + set : ''),
     };
   }
 
-  const lookaheadFrom = i => {
-    const plan = cls.plan || [];
-    for (let k = i + 1; k < plan.length; k++) if (plan[k].name) return k - i;
-    return 1;
-  };
-
+  let renderedKind = '';
   function renderClassClock() {
     const plan = cls.plan || [];
+    renderedKind = '';
     if (!plan.length) return '';
 
-    if (!(prog.classStart || cls.t0)) {
+    if (!(prog.classStart || cls.t0 || prog.pausedAt)) {
       return '<div class="ath-card ath-clock ath-clock-idle">' +
         '<div class="ath-kicker">⏱️ Follow the room</div>' +
         '<div class="ath-count-label">Your instructor hasn\'t started the clock yet. ' +
@@ -1142,71 +1490,127 @@
 
     const pos = planPosition();
     if (!pos) return '';
+    renderedKind = posKind(pos);
 
     if (pos.done) {
-      return '<div class="ath-card ath-clock is-done">' +
+      return '<div class="ath-card ath-clock is-done" id="ath-clock-card">' +
         '<div class="ath-kicker">✅ Class complete</div>' +
         '<div class="ath-clock-time" id="ath-clock-time">Done</div>' +
         '<div class="ath-clock-now" id="ath-clock-now">Great work.</div>' +
+        '<button class="ath-mini ath-resync" id="ath-resync-btn">⇄ Still going? Re-sync</button>' +
+        (resyncOpen ? resyncList(pos) : '') +
+      '</div>';
+    }
+
+    if (pos.pending) {
+      const ti = targetIdx(0);
+      return '<div class="ath-card ath-clock ath-clock-pending" id="ath-clock-card">' +
+        '<div class="ath-clock-phase" id="ath-clock-phase">Class starts in</div>' +
+        '<div class="ath-clock-time" id="ath-clock-time">' + mmss(pos.left) + '</div>' +
+        '<div class="ath-clock-now" id="ath-clock-now">' + esc(ti >= 0 ? 'First: ' + plan[ti].name : '') + '</div>' +
       '</div>';
     }
 
     const f = clockFace(pos);
-    return '<div class="ath-card ath-clock phase-' + pos.step.phase + '" id="ath-clock-card">' +
+    return '<div class="ath-card ath-clock phase-' + pos.step.phase + (pos.paused ? ' is-paused' : '') +
+        '" id="ath-clock-card">' +
       '<div class="ath-clock-phase" id="ath-clock-phase">' + esc(f.phase) + '</div>' +
       '<div class="ath-clock-time" id="ath-clock-time">' + f.time + '</div>' +
       '<div class="ath-clock-now" id="ath-clock-now">' + esc(f.now) + '</div>' +
+      '<div class="ath-clock-round" id="ath-clock-round">' + esc(f.round) + '</div>' +
+      '<div class="ath-clock-detail" id="ath-clock-detail">' + detailHtml(f.ti) + '</div>' +
       '<div class="ath-clock-next" id="ath-clock-next">' + esc(f.next) + '</div>' +
       '<div class="ath-clock-bar"><span id="ath-clock-fill" style="width:' + f.pct + '%"></span></div>' +
       '<div class="ath-clock-total" id="ath-clock-total">' + f.totalLeft + '</div>' +
-      '<button class="ath-mini ath-resync" id="ath-resync-btn">⇄ Re-sync to the room</button>' +
+      (pos.paused
+        ? '<div class="ath-paused-note">Your instructor paused the class here.</div>' +
+          '<button class="ath-big-btn start" id="ath-clock-resume">▶ The room has resumed</button>'
+        : '') +
+      '<button class="ath-mini ath-resync" id="ath-resync-btn" aria-expanded="' + resyncOpen + '">' +
+        '⇄ Re-sync to the room</button>' +
       (resyncOpen ? resyncList(pos) : '') +
     '</div>';
   }
 
-  // Tapping the move the room is actually on snaps this phone to the nearest
-  // occurrence of it — nearest, so it works both when the instructor paused
-  // (snap back) and when they skipped ahead (snap forward), and it picks the
-  // right round out of the eight identical rounds in a Tabata.
-  // Only moves near the current position are offered: a full class is 30-odd
+  // Tapping the move the room is on jumps this phone to the start of that
+  // exact step — every round of a Tabata is its own button ("· 3/8"), and
+  // rest is never offered because it has no move to recognise. Small
+  // differences are then trimmed with the ± nudges, which change the time
+  // left on this phone's clock.
+  // Only steps near the current position are offered: a full class is 30-odd
   // moves, which is an unusable list on a phone, and the room is never more
   // than a few moves away from where this clock thinks it is.
   const RESYNC_BACK = 4, RESYNC_FWD = 5;
 
-  function resyncList(pos) {
+  function resyncOptions() {
     const plan = cls.plan || [];
-    const seq = [];
-    plan.forEach(s => {
-      if (s.name && s.phase !== 'rest' && seq[seq.length - 1] !== s.name) seq.push(s.name);
-    });
-    if (!seq.length) return '';
-    const cur = pos.step ? seq.lastIndexOf(pos.step.name) : -1;
-    const at = cur < 0 ? 0 : cur;
+    const opts = [];
+    plan.forEach((s, i) => { if (s.name && isMovePhase(s.phase)) opts.push({ idx: i, name: s.name }); });
+    for (let a = 0; a < opts.length;) {
+      let b = a;
+      while (b + 1 < opts.length && opts[b + 1].name === opts[a].name) b++;
+      if (b > a) for (let k = a; k <= b; k++) opts[k].tag = (k - a + 1) + '/' + (b - a + 1);
+      a = b + 1;
+    }
+    return opts;
+  }
+
+  function resyncList(pos) {
+    const opts = resyncOptions();
+    if (!opts.length) return '';
+    let at = 0;
+    opts.forEach((o, k) => { if (o.idx <= pos.idx) at = k; });
     const from = Math.max(0, at - RESYNC_BACK);
-    const win = seq.slice(from, at + RESYNC_FWD + 1);
+    const win = opts.slice(from, at + RESYNC_FWD + 1);
+    const curIdx = pos.done ? -1 : pos.idx;
     return '<div class="ath-resync-panel">' +
-      '<div class="ath-resync-hint">Which move is the room on?</div>' +
+      '<div class="ath-resync-hint">Tap the move the room is on — your clock jumps to its start.</div>' +
       '<div class="ath-resync-opts">' +
-        win.map(n => '<button class="ath-resync-opt' + (n === (pos.step || {}).name ? ' is-current' : '') +
-          '" data-resync="1">' + esc(n) + '</button>').join('') +
+        win.map(o => '<button class="ath-resync-opt' + (o.idx === curIdx ? ' is-current' : '') +
+          '" data-resync-idx="' + o.idx + '">' + esc(o.name) +
+          (o.tag ? ' <span class="ath-resync-tag">· ' + o.tag + '</span>' : '') + '</button>').join('') +
       '</div>' +
-      '<button class="ath-mini ath-resync-cancel" id="ath-resync-cancel">Cancel</button>' +
+      '<div class="ath-resync-hint">Room\u2019s timer a few seconds off? Adjust yours:</div>' +
+      '<div class="ath-nudge-row">' +
+        [-10, -3, 3, 10].map(n => '<button class="ath-nudge" data-nudge="' + n + '" aria-label="' +
+          (n > 0 ? 'Add ' : 'Take off ') + Math.abs(n) + ' seconds">' +
+          (n > 0 ? '+' : '\u2212') + Math.abs(n) + 's</button>').join('') +
+      '</div>' +
+      '<button class="ath-mini ath-resync-cancel" id="ath-resync-cancel">Done</button>' +
     '</div>';
   }
 
-  function applyResync(name) {
+  function applyResync(idx) {
     const plan = cls.plan || [];
+    const st = plan[idx];
     const e = planElapsed();
-    let best = null, bestGap = Infinity;
-    plan.forEach(s => {
-      if (s.name !== name || s.phase === 'rest') return;
-      const gap = Math.abs(s.start - e);
-      if (gap < bestGap) { bestGap = gap; best = s; }
-    });
-    if (!best) return;
-    prog.syncOffset = (prog.syncOffset || 0) + (e - best.start);
+    if (!st || e === null) return;
+    prog.syncOffset = (prog.syncOffset || 0) + (e - st.start);
     resyncOpen = false;
-    persist(); render();
+    persist(); render(); requestWake();
+    if (navigator.vibrate) navigator.vibrate(30);
+  }
+
+  // +N puts N seconds back on this phone's timer; −N takes them off.
+  function nudge(n) {
+    const e = planElapsed();
+    if (e === null) return;
+    // Adding time moves this clock back; never past the start of the class,
+    // or the phone would drop to the "Class starts in" card mid-class.
+    const shift = n > 0 ? Math.min(n, Math.max(0, e)) : n;
+    if (!shift) return;
+    prog.syncOffset = (prog.syncOffset || 0) + shift;
+    persist(); render(); requestWake();
+  }
+
+  // The room was paused when the link was made, and has now started again.
+  function resumeFromPause() {
+    const e = planElapsed();
+    if (e === null) return;
+    prog.classStart = Date.now() - e * 1000;
+    prog.pausedAt = 0;
+    prog.syncOffset = 0;
+    persist(); render(); requestWake();
     if (navigator.vibrate) navigator.vibrate(30);
   }
 
@@ -1249,31 +1653,44 @@
           '<span class="ath-id-swap">⇄</span>' +
         '</button>' +
         '<div class="ath-head-btns">' +
-          '<button class="ath-sound sound-toggle-btn" id="ath-sound" type="button" title="Audio cues">🔇</button>' +
+          '<button class="ath-sound sound-toggle-btn" id="ath-sound" type="button" title="Audio cues" aria-label="Toggle audio cues">🔇</button>' +
+          '<button class="ath-sound voice-toggle-btn" id="ath-voice" type="button" title="Spoken cues" aria-label="Toggle spoken cues">🗣️</button>' +
           '<button class="ath-reset" id="ath-reset" title="Clear my progress">Reset</button>' +
         '</div>' +
       '</div>' +
+      ((typeof ihAudioNeedsUnlock === 'function' && ihAudioNeedsUnlock())
+        ? '<button class="ath-unlock ih-unlock-chip" id="ath-unlock" type="button">🔈 Tap to enable sound</button>'
+        : '') +
       renderClassClock() +
       main() +
       renderBurner() +
-      '<div class="ath-foot">Private to ' + esc(me.name) + ' on this phone · saved automatically</div>';
+      renderBest() +
+      '<div class="ath-foot">Private to  ' + esc(me.name) + ' on this phone · saved automatically</div>';
     bind();
     scheduleTick();
+    if (classIsOver()) releaseWake();
   }
 
   function bind() {
     const on = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
 
     on('ath-sound', () => { if (typeof toggleSound === 'function') toggleSound(); });
+    on('ath-voice', () => { if (typeof toggleVoice === 'function') toggleVoice(); });
+    on('ath-unlock', () => { if (typeof ihAudioUnlock === 'function') ihAudioUnlock(); });
+    if (typeof syncVoiceButtons === 'function') syncVoiceButtons();
     // Rendered fresh on every render(), so the icon has to be re-synced.
     if (typeof syncSoundButtons === 'function') syncSoundButtons();
 
     on('ath-start-btn', () => { prog.startedAt = Date.now(); persist(); requestWake(); render(); });
-    on('ath-clock-start', () => { prog.classStart = Date.now(); prog.syncOffset = 0; persist(); requestWake(); render(); });
+    on('ath-clock-start', () => { prog.classStart = Date.now(); prog.syncOffset = 0; prog.pausedAt = 0; persist(); requestWake(); render(); });
+    on('ath-clock-resume', resumeFromPause);
     on('ath-resync-btn', () => { resyncOpen = !resyncOpen; render(); });
     on('ath-resync-cancel', () => { resyncOpen = false; render(); });
-    document.querySelectorAll('[data-resync]').forEach(b => b.addEventListener('click', () => {
-      applyResync(b.textContent);
+    document.querySelectorAll('[data-resync-idx]').forEach(b => b.addEventListener('click', () => {
+      applyResync(parseInt(b.dataset.resyncIdx, 10));
+    }));
+    document.querySelectorAll('[data-nudge]').forEach(b => b.addEventListener('click', () => {
+      nudge(parseInt(b.dataset.nudge, 10) || 0);
     }));
     on('ath-round-btn', () => {
       prog.rounds = prog.rounds || [];
@@ -1290,7 +1707,10 @@
     on('ath-reset', () => {
       if (confirm('Clear ' + me.name + '\u2019s progress for this class? ' +
                   'This only affects this phone.')) {
-        prog = {}; persist(); render();
+        // Progress only — where this phone sits on the room's clock stays.
+        const keep = {};
+        ['t0seen', 'pausedAt', 'classStart', 'syncOffset'].forEach(k => { if (prog[k]) keep[k] = prog[k]; });
+        prog = keep; persist(); render();
       }
     });
 
@@ -1423,14 +1843,23 @@
   let lastClockIdx = -1;
   function tickClassClock() {
     const timeEl = document.getElementById('ath-clock-time');
-    if (!timeEl) return;
     const pos = planPosition();
     if (!pos) return;
-
-    if (pos.done) {
-      if (lastClockIdx !== -2) { lastClockIdx = -2; render(); }
+    // Starting, finishing or pausing changes the whole card, not just text.
+    if (!timeEl || posKind(pos) !== renderedKind) {
+      const was = renderedKind;
+      // Coming out of the countdown is the start of class: announce it.
+      lastClockIdx = was === 'pending' ? -3 : -1;
+      render();
+      if (pos.done && was === 'live') {
+        if (typeof audioCue !== 'undefined' && audioCue.enabled) audioCue.finish();
+        if (typeof ihSpeak === 'function') ihSpeak('Class complete. Great work.');
+        if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
+      }
       return;
     }
+    if (pos.done || pos.paused) return;
+    if (pos.pending) { timeEl.textContent = mmss(pos.left); return; }
 
     const f = clockFace(pos);
     timeEl.textContent = f.time;
@@ -1439,21 +1868,33 @@
     const fill = document.getElementById('ath-clock-fill');
     if (fill) fill.style.width = f.pct + '%';
 
+    const plan = cls.plan || [];
     if (pos.idx !== lastClockIdx) {
+      const first = lastClockIdx === -1;
       lastClockIdx = pos.idx;
-      const ph = document.getElementById('ath-clock-phase');
-      if (ph) ph.textContent = f.phase;
-      const now = document.getElementById('ath-clock-now');
-      if (now) now.textContent = f.now;
-      const next = document.getElementById('ath-clock-next');
-      if (next) next.textContent = f.next;
+      const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+      set('ath-clock-phase', f.phase);
+      set('ath-clock-now', f.now);
+      set('ath-clock-round', f.round);
+      set('ath-clock-next', f.next);
+      const det = document.getElementById('ath-clock-detail');
+      if (det) det.innerHTML = detailHtml(f.ti);
       const card = document.getElementById('ath-clock-card');
       if (card) card.className = 'ath-card ath-clock phase-' + pos.step.phase;
-      if (pos.step.phase === 'work' && navigator.vibrate) navigator.vibrate(40);
-      athCue(pos.step.phase);
+      const live = document.getElementById('ath-live');
+      if (live) live.textContent = f.say;
+      // A page that has just opened lands mid-step: announce quietly.
+      if (!first) {
+        if (typeof ihHaptic === 'function') ihHaptic(pos.step.phase);
+        else if (pos.step.phase === 'work' && navigator.vibrate) navigator.vibrate(40);
+        if (typeof ihSpeakStep === 'function') ihSpeakStep(pos.step, plan[targetIdx(pos.idx + 1)] || plan[pos.idx + 1]);
+        athCue(pos.step.phase);
+      }
       lastBeepSec = -1;
     }
-    athCountdown(pos.left);
+    const spoke = typeof ihVoiceTick === 'function' &&
+      ihVoiceTick(pos.left, pos.step, plan[pos.idx + 1], pos.idx) === true;
+    athCountdown(pos.left, spoke);
   }
 
   // Audio is opt-in on a phone, so all of this is silent unless the athlete
@@ -1464,21 +1905,31 @@
     if (phase === 'work') audioCue.startWork();
     else if (phase === 'rest') audioCue.startRest();
   }
-  function athCountdown(left) {
+  function athCountdown(left, spoke) {
     if (typeof audioCue === 'undefined' || !audioCue.enabled) return;
     const s = Math.ceil(left);
     if (s === lastBeepSec) return;
     lastBeepSec = s;
-    if (s > 0 && s <= 3) audioCue.countdown();
+    // The spoken "3, 2, 1" replaces the beep rather than talking over it.
+    if (s > 0 && s <= 3 && !spoke) audioCue.countdown();
+  }
+
+  // Let the screen sleep once there is nothing left to follow.
+  function releaseWake() {
+    const wl = wakeLock;
+    wakeLock = null;
+    if (wl) { try { wl.release(); } catch (e) {} }
   }
 
   // Only the clock line ticks, so typing a rep count is never interrupted.
   function scheduleTick() {
-    if (tickHandle) clearInterval(tickHandle);
-    const mirrors = (cls.plan || []).length && (prog.classStart || cls.t0);
-    if (!mirrors && (!SELF_PACED_MODES[cls.mode] || !prog.startedAt)) return;
+    if (tickHandle) { clearInterval(tickHandle); tickHandle = null; }
+    const plan = cls.plan || [];
+    const pos = plan.length ? planPosition() : null;
+    const mirrors = !!pos && !pos.done && !pos.paused;
+    if (!mirrors && (!SELF_PACED_MODES[cls.mode] || !prog.startedAt || remainingMs() === 0)) return;
     tickHandle = setInterval(() => {
-      if (mirrors) tickClassClock();
+      if (mirrors) { tickClassClock(); return; }
       const cd = document.getElementById('ath-countdown');
       if (cd) {
         const rem = remainingMs();
@@ -1492,8 +1943,10 @@
             if (lbl) lbl.textContent = 'cap reached';
             if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
             if (typeof audioCue !== 'undefined' && audioCue.enabled) audioCue.finish();
+            if (typeof ihSpeak === 'function') ihSpeak('Time');
           }
           clearInterval(tickHandle); tickHandle = null;
+          releaseWake();
         }
         return;
       }
@@ -1513,25 +1966,57 @@
         'Ask your instructor to show the code again.</div>';
       return true;
     }
+    rememberLastClass();
 
     document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
     const screen = document.getElementById('athlete-screen');
     if (screen) screen.classList.add('active');
     document.body.classList.add('athlete-mode');
 
-    // A link that already names its athlete goes straight to their page.
+    // Phase and move changes are announced for screen readers. Lives outside
+    // #athlete-root so re-renders never wipe it mid-announcement.
+    if (!document.getElementById('ath-live')) {
+      const live = document.createElement('div');
+      live.id = 'ath-live';
+      live.className = 'sr-only';
+      live.setAttribute('aria-live', 'polite');
+      live.setAttribute('role', 'status');
+      document.body.appendChild(live);
+    }
+
+    // A link that already names its athlete goes straight to their page. A
+    // fresh re-sync link from the instructor has no name in it, so the
+    // phone falls back to whoever it last tracked for this class.
     const u = /[#&]u=([^&#]+)/.exec(location.hash || '');
     let uid = '';
     if (u) { try { uid = slugName(decodeURIComponent(u[1])) || decodeURIComponent(u[1]); } catch (e) { uid = u[1]; } }
+    if (!uid) uid = uidForSid(cls.sid);
     if (uid) identify(uid); else renderGate(false);
 
     // Elapsed time is always recomputed from timestamps, so sleeping the
     // phone or backgrounding the tab cannot drift the clock.
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden && me) { render(); requestWake(); }
+      if (!document.hidden && me) {
+        lastClockIdx = -1;
+        render();
+        if (!classIsOver()) requestWake();
+      }
     });
     return true;
   }
+
+  // remote.js builds the instructor's own phone link from the same address
+  // logic the athlete link uses.
+  window.__ihPhoneBridge = { base: athleteBase, load: loadPhoneOrigin, start: classStartEpoch,
+                             paused: classPausedAt, markShared: markLinkShared };
+
+  // For tests/live.test.js: the codec and the clock maths, nothing stateful.
+  window.__ihLiveTest = {
+    encodePayload, decodePayload, packPlan, unpackPlan, classPayloadFromWorkout,
+    liveTimer, classStartEpoch, classPausedAt,
+    athlete(c, p) { cls = c; prog = p; occCache = null; },
+    planPosition, resyncOptions, resyncList, clockFace,
+  };
 
   window.__ATHLETE_MODE = /[#&]c=/.test(location.hash || '');
   document.addEventListener('DOMContentLoaded', boot);
@@ -1540,7 +2025,9 @@
   // changes the fragment, so DOMContentLoaded never fires again and the
   // instructor screens stay up. Reload so the athlete page boots properly.
   window.addEventListener('hashchange', () => {
-    const wants = /[#&]c=/.test(location.hash || '');
-    if (wants && !document.body.classList.contains('athlete-mode')) location.reload();
+    const m = /[#&]c=([A-Za-z0-9\-_]+)/.exec(location.hash || '');
+    if (!m) return;
+    // Re-scanning a re-sync QR while the page is open swaps the payload.
+    if (!document.body.classList.contains('athlete-mode') || m[1] !== rawPayload) location.reload();
   });
 })();
