@@ -74,9 +74,54 @@ const FOCUS_CONTRACT = {
   glutes: { requiredMajors:['glutes','hamstrings'],
             minorPool:['abductors','adductors','lowerback','calves'],
             minorTargets:3, wantConditioning:false },
+  // ── Emphasis themes (second step of the two-step picker) ──
+  chestback:     { requiredMajors:['chest','back'],
+                   minorPool:['biceps','triceps','reardelts','forearms'],
+                   minorTargets:3, wantConditioning:false },
+  shouldersarms: { requiredMajors:['shoulders'],
+                   minorPool:['biceps','triceps','reardelts'],
+                   minorTargets:3, wantConditioning:false },
+  quads:         { requiredMajors:['quads'],
+                   minorPool:['calves','adductors'],
+                   minorTargets:2, wantConditioning:false },
+  hips:          { requiredMajors:['glutes'],
+                   minorPool:['abductors','adductors','hipflexors'],
+                   minorTargets:3, wantConditioning:false },
 };
 
+// ── CUSTOM MUSCLE PICK ────────────────────────────────────────
+// A custom class stores its muscles inside the focus key itself —
+// 'custom:chest,glutes,biceps' — so it round-trips through saved classes,
+// history, profiles and the coverage panel with no extra state to keep in sync.
+const CUSTOM_FOCUS_PREFIX = 'custom:';
+
+/** Ordered, de-duplicated muscle ids for a custom key, or null if not custom. */
+function customFocusIds(key) {
+  if (typeof key !== 'string' || !key.startsWith(CUSTOM_FOCUS_PREFIX)) return null;
+  const want = new Set(key.slice(CUSTOM_FOCUS_PREFIX.length).split(','));
+  const ids = Object.keys(MUSCLE_GROUPS).filter(id => want.has(id));
+  return ids.length ? ids : null;
+}
+/** Build a custom focus key from muscle ids ('' when nothing valid is picked). */
+function makeCustomFocusKey(ids) {
+  const want = new Set(ids || []);
+  const ordered = Object.keys(MUSCLE_GROUPS).filter(id => want.has(id));
+  return ordered.length ? CUSTOM_FOCUS_PREFIX + ordered.join(',') : '';
+}
+function customFocusLabel(ids) {
+  const names = ids.map(id => MUSCLE_GROUPS[id].short);
+  return 'Custom · ' + (names.length > 3 ? names.slice(0, 3).join(', ') + ' +' + (names.length - 3) : names.join(', '));
+}
+
+function _customContract(ids) {
+  const majors = ids.filter(id => MUSCLE_GROUPS[id].tier === 'major');
+  const minors = ids.filter(id => MUSCLE_GROUPS[id].tier === 'minor');
+  return { requiredMajors: majors, minorPool: minors, minorTargets: minors.length, wantConditioning: false };
+}
+
 function getFocusContract(muscleKey) {
+  const ids = customFocusIds(muscleKey);
+  if (ids) return _customContract(ids);
   return FOCUS_CONTRACT[muscleKey] || FOCUS_CONTRACT.full;
 }
 
@@ -422,8 +467,23 @@ const BALANCE_CONTRACT = {
   push:   { pairs:[],                               minUnilateral:1, wantCore:false },
   pull:   { pairs:[],                               minUnilateral:1, wantCore:false },
   glutes: { pairs:[['knee','hip']],                 minUnilateral:2, wantCore:false },
+  chestback:     { pairs:[['push','pull']],         minUnilateral:1, wantCore:false },
+  shouldersarms: { pairs:[],                        minUnilateral:1, wantCore:false },
+  quads:         { pairs:[],                        minUnilateral:1, wantCore:false },
+  hips:          { pairs:[],                        minUnilateral:1, wantCore:false },
 };
-function getBalanceContract(key) { return BALANCE_CONTRACT[key] || BALANCE_CONTRACT.full; }
+function getBalanceContract(key) {
+  const ids = customFocusIds(key);
+  if (ids) {
+    const has = (...g) => g.some(id => ids.includes(id));
+    const pairs = [];
+    if (has('chest', 'shoulders', 'triceps') && has('back', 'biceps', 'reardelts')) pairs.push(['push', 'pull']);
+    if (has('quads') && has('glutes', 'hamstrings')) pairs.push(['knee', 'hip']);
+    const lower = has('quads', 'hamstrings', 'glutes', 'calves', 'adductors', 'abductors');
+    return { pairs, minUnilateral: lower ? 1 : 0, wantCore: false };
+  }
+  return BALANCE_CONTRACT[key] || BALANCE_CONTRACT.full;
+}
 
 /** Tally movement groups across a list of exercises. */
 function movementTally(exercises = []) {
@@ -445,8 +505,50 @@ function patternLabel(id, short = false) {
 }
 function patternIcon(id) { return MOVEMENT_PATTERNS[id]?.icon || '•'; }
 
+// ── THEME MATCH STRENGTH ──────────────────────────────────────
+// Emphasis themes ("Chest + Back", "Quads"…) and custom picks have no legacy
+// focus tags, so candidates are admitted on muscles alone — including moves
+// that only touch the theme as a secondary muscle (a plank in a "Shoulders +
+// Arms" class). These helpers rank primary hits first.
+const EMPHASIS_FOCUS_KEYS = ['chestback', 'shouldersarms', 'quads', 'hips'];
+
+/**
+ * 3 = a primary muscle is a required major of the theme, 2 = a primary muscle is
+ * in its accessory pool, 1 = only a secondary muscle touches the theme, 0 = none.
+ */
+function focusMatchStrength(ex, key) {
+  if (!ex) return 0;
+  const c = getFocusContract(key);
+  const majors = new Set(c.requiredMajors), minors = new Set(c.minorPool);
+  const sig = (ex.muscles && Array.isArray(ex.muscles.primary)) ? ex.muscles : resolveMuscles(ex);
+  if (sig.primary.some(id => majors.has(id))) return 3;
+  if (sig.primary.some(id => minors.has(id))) return 2;
+  if (sig.secondary.some(id => majors.has(id) || minors.has(id))) return 1;
+  return 0;
+}
+
+/**
+ * For emphasis themes and custom picks: primary-muscle hits first, and
+ * secondary-only moves are dropped when there are enough primary hits to fill
+ * `need` slots with headroom (×1.5, so prop limits still have choices).
+ * Order inside each band is preserved, so the generator's shuffle still counts.
+ * Other focus keys are returned unchanged.
+ */
+function rankFocusCandidates(cands, key, need) {
+  if (!Array.isArray(cands)) return cands;
+  const themed = EMPHASIS_FOCUS_KEYS.includes(key) || !!customFocusIds(key);
+  if (!themed) return cands;
+  const strong = [], weak = [];
+  cands.forEach(ex => (focusMatchStrength(ex, key) >= 2 ? strong : weak).push(ex));
+  const want = Math.ceil((Number(need) || 0) * 1.5);
+  return strong.length >= want ? strong : strong.concat(weak);
+}
+
 // Expose for other scripts / debugging
 if (typeof window !== 'undefined') {
+  window.focusMatchStrength = focusMatchStrength;
+  window.rankFocusCandidates = rankFocusCandidates;
+  window.EMPHASIS_FOCUS_KEYS = EMPHASIS_FOCUS_KEYS;
   window.MUSCLE_GROUPS = MUSCLE_GROUPS;
   window.resolveMuscles = resolveMuscles;
   window.muscleLoadForExercises = muscleLoadForExercises;
@@ -455,4 +557,7 @@ if (typeof window !== 'undefined') {
   window.resolveMovement = resolveMovement;
   window.movementTally = movementTally;
   window.getBalanceContract = getBalanceContract;
+  window.customFocusIds = customFocusIds;
+  window.makeCustomFocusKey = makeCustomFocusKey;
+  window.customFocusLabel = customFocusLabel;
 }

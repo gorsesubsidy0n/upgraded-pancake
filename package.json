@@ -1,0 +1,11 @@
+{
+  "name": "inspire-habits",
+  "version": "2026.10.1",
+  "private": true,
+  "description": "HIIT and mixed-ability class builder. No build step: serve the folder as-is.",
+  "scripts": {
+    "start": "node serve.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "engines": { "node": ">=20" }
+}

@@ -1,375 +1,321 @@
 /* ══════════════════════════════════════════════════════════════════════
-   qr.js — self-contained QR Code generator (ISO/IEC 18004, model 2).
+   qr.js — a small, self-contained QR code encoder for the share panels.
 
-   No dependencies, no CDN, no build step: the studio's wifi is not on the
-   critical path. Byte mode only, which is all a URL needs.
+   Written for this app so the codes work offline and under the page's
+   Content-Security-Policy (no CDN, no image service, nothing leaves the
+   device). Follows ISO/IEC 18004: byte mode (UTF-8), versions 1–40, all
+   four error-correction levels, Reed–Solomon over GF(256), the eight
+   masks scored by the standard's penalty rules. Drawn as inline SVG.
 
-   Public API:
-     QR.encode(text, level)  -> { size, modules:boolean[][], version, level }
-     QR.svg(text, opts)      -> SVG markup string
+   IHQR.encode(text) → { version, ecl, size, modules } or null (too long)
+   IHQR.svg(text)    → '<svg …>' or '' (too long)
+   ihShowQRBig(id)   → full-screen code for the text of element #id
    ══════════════════════════════════════════════════════════════════════ */
-(function (global) {
+(function () {
   'use strict';
 
-  // ── Galois field GF(256), primitive polynomial 0x11D ──────────────────
+  // Per version (index 1–40), for L, M, Q, H.
+  const ECC_PER_BLOCK = [
+    [0, 7, 10, 15, 20, 26, 18, 20, 24, 30, 18, 20, 24, 26, 30, 22, 24, 28, 30, 28, 28, 28, 28, 30, 30, 26, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30],
+    [0, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26, 30, 22, 22, 24, 24, 28, 28, 26, 26, 26, 26, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28],
+    [0, 13, 22, 18, 26, 18, 24, 18, 22, 20, 24, 28, 26, 24, 20, 30, 24, 28, 28, 26, 30, 28, 30, 30, 30, 30, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30],
+    [0, 17, 28, 22, 16, 22, 28, 26, 26, 24, 28, 24, 28, 22, 24, 24, 30, 28, 28, 26, 28, 30, 24, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30],
+  ];
+  const NUM_BLOCKS = [
+    [0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 4, 4, 4, 4, 4, 6, 6, 6, 6, 7, 8, 8, 9, 9, 10, 12, 12, 12, 13, 14, 15, 16, 17, 18, 19, 19, 20, 21, 22, 24, 25],
+    [0, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5, 5, 8, 9, 9, 10, 10, 11, 13, 14, 16, 17, 17, 18, 20, 21, 23, 25, 26, 28, 29, 31, 33, 35, 37, 38, 40, 43, 45, 47, 49],
+    [0, 1, 1, 2, 2, 4, 4, 6, 6, 8, 8, 8, 10, 12, 16, 12, 17, 16, 18, 21, 20, 23, 23, 25, 27, 29, 34, 34, 35, 38, 40, 43, 45, 48, 51, 53, 56, 59, 62, 65, 68],
+    [0, 1, 1, 2, 4, 4, 4, 5, 6, 8, 8, 11, 11, 16, 16, 18, 16, 19, 21, 25, 25, 25, 34, 30, 32, 35, 37, 40, 42, 45, 48, 51, 54, 57, 60, 63, 66, 70, 74, 77, 81],
+  ];
+  const ECL_NAMES = 'LMQH';
+  const ECL_FORMAT = [1, 0, 3, 2];
+
+  // Modules left for data + error correction once the fixed patterns are drawn.
+  function rawModules(ver) {
+    let r = (16 * ver + 128) * ver + 64;
+    if (ver >= 2) {
+      const n = Math.floor(ver / 7) + 2;
+      r -= (25 * n - 10) * n - 55;
+      if (ver >= 7) r -= 36;
+    }
+    return r;
+  }
+  const dataCodewords = (ver, e) =>
+    Math.floor(rawModules(ver) / 8) - ECC_PER_BLOCK[e][ver] * NUM_BLOCKS[e][ver];
+
+  // ── Reed–Solomon over GF(256), polynomial 0x11D ─────────────────────
   const EXP = new Uint8Array(512), LOG = new Uint8Array(256);
-  (function initGF() {
-    let x = 1;
-    for (let i = 0; i < 255; i++) {
-      EXP[i] = x; LOG[x] = i;
-      x <<= 1;
-      if (x & 0x100) x ^= 0x11D;
-    }
-    for (let i = 255; i < 512; i++) EXP[i] = EXP[i - 255];
-  })();
-
-  const gfMul = (a, b) => (a === 0 || b === 0) ? 0 : EXP[LOG[a] + LOG[b]];
-
-  // Generator polynomial for `degree` error-correction codewords:
-  // the product of (x - a^i) for i in 0..degree-1, highest power first.
-  function rsGenerator(degree) {
-    let poly = [1];
-    for (let d = 0; d < degree; d++) {
-      const next = new Array(poly.length + 1).fill(0);
-      for (let i = 0; i < poly.length; i++) {
-        next[i] ^= poly[i];                          // multiply by x
-        next[i + 1] ^= gfMul(poly[i], EXP[d]);       // multiply by a^d
-      }
-      poly = next;
-    }
-    return poly;
+  for (let i = 0, x = 1; i < 255; i++) {
+    EXP[i] = x; LOG[x] = i;
+    x <<= 1; if (x & 0x100) x ^= 0x11D;
   }
+  for (let i = 255; i < 512; i++) EXP[i] = EXP[i - 255];
+  const gmul = (a, b) => (a && b ? EXP[LOG[a] + LOG[b]] : 0);
 
-  function rsRemainder(data, degree) {
-    const gen = rsGenerator(degree);
-    const rem = new Array(degree).fill(0);
+  function rsGenerator(deg) {
+    let g = [1];
+    for (let i = 0; i < deg; i++) {
+      const n = new Array(g.length + 1).fill(0);
+      for (let j = 0; j < g.length; j++) { n[j] ^= g[j]; n[j + 1] ^= gmul(g[j], EXP[i]); }
+      g = n;
+    }
+    return g;
+  }
+  function rsRemainder(data, gen) {
+    const deg = gen.length - 1;
+    const msg = data.concat(new Array(deg).fill(0));
     for (let i = 0; i < data.length; i++) {
-      const factor = data[i] ^ rem[0];
-      rem.shift(); rem.push(0);
-      for (let j = 0; j < degree; j++) rem[j] ^= gfMul(gen[j + 1], factor);
+      const c = msg[i];
+      if (c) for (let j = 1; j <= deg; j++) msg[i + j] ^= gmul(gen[j], c);
     }
-    return rem;
+    return msg.slice(data.length);
   }
 
-  // ── Spec tables ───────────────────────────────────────────────────────
-  // Total codewords (data + EC) per version, 1..40.
-  const TOTAL_CW = [
-    26, 44, 70, 100, 134, 172, 196, 242, 292, 346,
-    404, 466, 532, 581, 655, 733, 815, 901, 991, 1085,
-    1156, 1258, 1364, 1474, 1588, 1706, 1828, 1921, 2051, 2185,
-    2323, 2465, 2611, 2761, 2876, 3034, 3196, 3362, 3532, 3706,
-  ];
-
-  // [ecCodewordsPerBlock, numBlocks] per version, 1..40.
-  const ECB = {
-    L: [[7,1],[10,1],[15,1],[20,1],[26,1],[18,2],[20,2],[24,2],[30,2],[18,4],
-        [20,4],[24,4],[26,4],[30,4],[22,6],[24,6],[28,6],[30,6],[28,7],[28,8],
-        [28,8],[28,9],[30,9],[30,10],[26,12],[28,12],[30,12],[30,13],[30,14],[30,15],
-        [30,16],[30,17],[30,18],[30,19],[30,19],[30,20],[30,21],[30,22],[30,24],[30,25]],
-    M: [[10,1],[16,1],[26,1],[18,2],[24,2],[16,4],[18,4],[22,4],[22,5],[26,5],
-        [30,5],[22,8],[22,9],[24,9],[24,10],[28,10],[28,11],[26,13],[26,14],[26,16],
-        [26,17],[28,17],[28,18],[28,20],[28,21],[28,23],[28,25],[28,26],[28,28],[28,29],
-        [28,31],[28,33],[28,35],[28,37],[28,38],[28,40],[28,43],[28,45],[28,47],[28,49]],
-    Q: [[13,1],[22,1],[18,2],[26,2],[18,4],[24,4],[18,6],[22,6],[20,8],[24,8],
-        [28,8],[26,10],[24,12],[20,16],[30,12],[24,17],[28,16],[28,18],[26,21],[30,20],
-        [28,23],[30,23],[30,25],[30,27],[30,29],[28,34],[30,34],[30,35],[30,38],[30,40],
-        [30,43],[30,45],[30,48],[30,51],[30,53],[30,56],[30,59],[30,62],[30,65],[30,68]],
-    H: [[17,1],[28,1],[22,2],[16,4],[22,4],[28,4],[26,5],[26,6],[24,8],[28,8],
-        [24,11],[28,11],[22,16],[24,16],[24,18],[30,16],[28,19],[28,21],[26,25],[28,25],
-        [30,25],[24,34],[30,30],[30,32],[30,35],[30,37],[30,40],[30,42],[30,45],[30,48],
-        [30,51],[30,54],[30,57],[30,60],[30,63],[30,66],[30,70],[30,74],[30,77],[30,81]],
-  };
-
-  const ECL_BITS = { L: 1, M: 0, Q: 3, H: 2 };
-
-  // Alignment pattern centre coordinates per version.
-  const ALIGN = [
-    [], [6,18], [6,22], [6,26], [6,30], [6,34], [6,22,38], [6,24,42], [6,26,46], [6,28,50],
-    [6,30,54], [6,32,58], [6,34,62], [6,26,46,66], [6,26,48,70], [6,26,50,74], [6,30,54,78],
-    [6,30,56,82], [6,30,58,86], [6,34,62,90], [6,28,50,72,94], [6,26,50,74,98], [6,30,54,78,102],
-    [6,28,54,80,106], [6,32,58,84,110], [6,30,58,86,114], [6,34,62,90,118], [6,26,50,74,98,122],
-    [6,30,54,78,102,126], [6,26,52,78,104,130], [6,30,56,82,108,134], [6,34,60,86,112,138],
-    [6,30,58,86,114,142], [6,34,62,90,118,146], [6,30,54,78,102,126,150], [6,24,50,76,102,128,154],
-    [6,28,54,80,106,132,158], [6,32,58,84,110,136,162], [6,26,54,82,110,138,166], [6,30,58,86,114,142,170],
-  ];
-
-  const dataCapacity = (version, level) => {
-    const [ec, blocks] = ECB[level][version - 1];
-    return TOTAL_CW[version - 1] - ec * blocks;
-  };
-
-  // ── Encoding ──────────────────────────────────────────────────────────
-  function utf8Bytes(str) {
-    const out = [];
-    for (let i = 0; i < str.length; i++) {
-      let c = str.charCodeAt(i);
-      if (c < 0x80) out.push(c);
-      else if (c < 0x800) out.push(0xC0 | (c >> 6), 0x80 | (c & 63));
-      else if (c >= 0xD800 && c <= 0xDBFF && i + 1 < str.length) {
-        const c2 = str.charCodeAt(i + 1);
-        const cp = 0x10000 + ((c - 0xD800) << 10) + (c2 - 0xDC00);
-        out.push(0xF0 | (cp >> 18), 0x80 | ((cp >> 12) & 63), 0x80 | ((cp >> 6) & 63), 0x80 | (cp & 63));
-        i++;
-      } else out.push(0xE0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
-    }
-    return out;
+  function alignPositions(ver) {
+    if (ver === 1) return [];
+    const n = Math.floor(ver / 7) + 2;
+    const step = ver === 32 ? 26 : Math.ceil((ver * 4 + 4) / (n * 2 - 2)) * 2;
+    const r = [6];
+    for (let p = ver * 4 + 10; r.length < n; p -= step) r.splice(1, 0, p);
+    return r;
   }
 
-  const charCountBits = version => (version < 10 ? 8 : 16);
+  const MASKS = [
+    (x, y) => (x + y) % 2 === 0,
+    (x, y) => y % 2 === 0,
+    (x, y) => x % 3 === 0,
+    (x, y) => (x + y) % 3 === 0,
+    (x, y) => (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0,
+    (x, y) => (x * y) % 2 + (x * y) % 3 === 0,
+    (x, y) => ((x * y) % 2 + (x * y) % 3) % 2 === 0,
+    (x, y) => ((x + y) % 2 + (x * y) % 3) % 2 === 0,
+  ];
 
-  function buildCodewords(bytes, version, level) {
-    const capacity = dataCapacity(version, level);
+  function utf8(text) {
+    if (typeof TextEncoder === 'function') return Array.from(new TextEncoder().encode(text));
+    return Array.from(unescape(encodeURIComponent(text)), c => c.charCodeAt(0));
+  }
+
+  function encode(text, minEcl) {
+    const bytes = utf8(String(text == null ? '' : text));
+    const lo = Math.max(0, Math.min(3, minEcl | 0));
+    // Smallest version that fits at the lowest allowed level keeps the
+    // modules as large as possible on screen; then take the strongest
+    // level that still fits in that version.
+    let ver = 1;
+    for (; ver <= 40; ver++) {
+      if (4 + (ver < 10 ? 8 : 16) + bytes.length * 8 <= dataCodewords(ver, lo) * 8) break;
+    }
+    if (ver > 40) return null;
+    const ccBits = ver < 10 ? 8 : 16;
+    const used = 4 + ccBits + bytes.length * 8;
+    let ecl = lo;
+    for (let e = 3; e > lo; e--) if (used <= dataCodewords(ver, e) * 8) { ecl = e; break; }
+
+    // Data bits: mode, length, bytes, terminator, byte padding, pad codewords.
     const bits = [];
-    const push = (val, len) => { for (let i = len - 1; i >= 0; i--) bits.push((val >> i) & 1); };
-
-    push(4, 4);                                   // byte mode
-    push(bytes.length, charCountBits(version));
-    bytes.forEach(b => push(b, 8));
-
-    // Terminator, then pad to a byte boundary, then alternating pad bytes.
-    const capBits = capacity * 8;
-    for (let i = 0; i < 4 && bits.length < capBits; i++) bits.push(0);
-    while (bits.length % 8 !== 0) bits.push(0);
-
-    const cw = [];
+    const put = (v, n) => { for (let i = n - 1; i >= 0; i--) bits.push((v >>> i) & 1); };
+    put(4, 4); put(bytes.length, ccBits); bytes.forEach(b => put(b, 8));
+    const cap = dataCodewords(ver, ecl) * 8;
+    put(0, Math.min(4, cap - bits.length));
+    put(0, (8 - bits.length % 8) % 8);
+    for (let pad = 0xEC; bits.length < cap; pad ^= 0xEC ^ 0x11) put(pad, 8);
+    const data = [];
     for (let i = 0; i < bits.length; i += 8) {
       let b = 0;
       for (let j = 0; j < 8; j++) b = (b << 1) | bits[i + j];
-      cw.push(b);
-    }
-    const PAD = [0xEC, 0x11];
-    for (let i = 0; cw.length < capacity; i++) cw.push(PAD[i % 2]);
-    return cw;
-  }
-
-  // Split into blocks, compute EC per block, then interleave both.
-  function interleave(cw, version, level) {
-    const [ecLen, numBlocks] = ECB[level][version - 1];
-    const totalData = cw.length;
-    const shortLen = Math.floor(totalData / numBlocks);
-    const numLong = totalData % numBlocks;          // blocks holding one extra codeword
-
-    const dataBlocks = [], ecBlocks = [];
-    let pos = 0;
-    for (let b = 0; b < numBlocks; b++) {
-      const len = shortLen + (b >= numBlocks - numLong ? 1 : 0);
-      const block = cw.slice(pos, pos + len); pos += len;
-      dataBlocks.push(block);
-      ecBlocks.push(rsRemainder(block, ecLen));
+      data.push(b);
     }
 
-    const out = [];
-    for (let i = 0; i <= shortLen; i++)
-      dataBlocks.forEach(b => { if (i < b.length) out.push(b[i]); });
-    for (let i = 0; i < ecLen; i++)
-      ecBlocks.forEach(b => out.push(b[i]));
-    return out;
-  }
+    // Split into blocks, add error correction, interleave.
+    const nb = NUM_BLOCKS[ecl][ver], eccLen = ECC_PER_BLOCK[ecl][ver];
+    const raw = Math.floor(rawModules(ver) / 8);
+    const numShort = nb - raw % nb, shortLen = Math.floor(raw / nb);
+    const gen = rsGenerator(eccLen);
+    const blocks = [];
+    for (let i = 0, k = 0; i < nb; i++) {
+      const len = shortLen - eccLen + (i < numShort ? 0 : 1);
+      const d = data.slice(k, k + len); k += len;
+      blocks.push({ d, ecc: rsRemainder(d, gen) });
+    }
+    const words = [];
+    for (let i = 0; i <= shortLen - eccLen; i++) blocks.forEach(b => { if (i < b.d.length) words.push(b.d[i]); });
+    for (let i = 0; i < eccLen; i++) blocks.forEach(b => words.push(b.ecc[i]));
 
-  // ── Matrix construction ───────────────────────────────────────────────
-  function buildMatrix(version, level, codewords, mask) {
-    const size = version * 4 + 17;
-    const m = Array.from({ length: size }, () => new Array(size).fill(false));
-    const fixed = Array.from({ length: size }, () => new Array(size).fill(false));
-
-    const set = (r, c, v) => { m[r][c] = v; fixed[r][c] = true; };
-
-    // Finder patterns + separators.
-    [[0, 0], [size - 7, 0], [0, size - 7]].forEach(([r0, c0]) => {
-      for (let r = -1; r <= 7; r++) for (let c = -1; c <= 7; c++) {
-        const rr = r0 + r, cc = c0 + c;
-        if (rr < 0 || rr >= size || cc < 0 || cc >= size) continue;
-        const inRing = (r >= 0 && r <= 6 && (c === 0 || c === 6)) ||
-                       (c >= 0 && c <= 6 && (r === 0 || r === 6));
-        const inCore = r >= 2 && r <= 4 && c >= 2 && c <= 4;
-        set(rr, cc, inRing || inCore);
+    // Fixed patterns.
+    const size = ver * 4 + 17;
+    const mod = Array.from({ length: size }, () => new Uint8Array(size));
+    const fn = Array.from({ length: size }, () => new Uint8Array(size));
+    const set = (x, y, dark) => { mod[y][x] = dark ? 1 : 0; fn[y][x] = 1; };
+    for (let i = 0; i < size; i++) { set(6, i, i % 2 === 0); set(i, 6, i % 2 === 0); }
+    const finder = (cx, cy) => {
+      for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) {
+        const x = cx + dx, y = cy + dy, d = Math.max(Math.abs(dx), Math.abs(dy));
+        if (x >= 0 && x < size && y >= 0 && y < size) set(x, y, d !== 2 && d !== 4);
       }
-    });
-
-    // Timing patterns.
-    for (let i = 8; i < size - 8; i++) { set(6, i, i % 2 === 0); set(i, 6, i % 2 === 0); }
-
-    // Alignment patterns (skipped where they would collide with finders).
-    const centres = ALIGN[version - 1];
-    centres.forEach(r0 => centres.forEach(c0 => {
-      const nearFinder = (r0 <= 8 && c0 <= 8) ||
-                         (r0 <= 8 && c0 >= size - 9) ||
-                         (r0 >= size - 9 && c0 <= 8);
-      if (nearFinder) return;
-      for (let r = -2; r <= 2; r++) for (let c = -2; c <= 2; c++)
-        set(r0 + r, c0 + c, Math.max(Math.abs(r), Math.abs(c)) !== 1);
-    }));
-
-    // Reserve format areas (written after masking) and the always-dark module.
-    for (let i = 0; i < 9; i++) { if (!fixed[8][i]) set(8, i, false); if (!fixed[i][8]) set(i, 8, false); }
-    for (let i = 0; i < 8; i++) { if (!fixed[8][size - 1 - i]) set(8, size - 1 - i, false); if (!fixed[size - 1 - i][8]) set(size - 1 - i, 8, false); }
-    set(size - 8, 8, true);
-
-    // Version information block (version 7 and up).
-    if (version >= 7) {
-      let rem = version;
+    };
+    finder(3, 3); finder(size - 4, 3); finder(3, size - 4);
+    const al = alignPositions(ver), n = al.length;
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+      if ((i === 0 && j === 0) || (i === 0 && j === n - 1) || (i === n - 1 && j === 0)) continue;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+        set(al[i] + dx, al[j] + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1);
+      }
+    }
+    const drawFormat = mask => {
+      const v = (ECL_FORMAT[ecl] << 3) | mask;
+      let rem = v;
+      for (let i = 0; i < 10; i++) rem = (rem << 1) ^ ((rem >>> 9) * 0x537);
+      const f = ((v << 10) | rem) ^ 0x5412;
+      const b = i => ((f >>> i) & 1) === 1;
+      for (let i = 0; i <= 5; i++) set(8, i, b(i));
+      set(8, 7, b(6)); set(8, 8, b(7)); set(7, 8, b(8));
+      for (let i = 9; i < 15; i++) set(14 - i, 8, b(i));
+      for (let i = 0; i < 8; i++) set(size - 1 - i, 8, b(i));
+      for (let i = 8; i < 15; i++) set(8, size - 15 + i, b(i));
+      set(8, size - 8, true);
+    };
+    drawFormat(0);
+    if (ver >= 7) {
+      let rem = ver;
       for (let i = 0; i < 12; i++) rem = (rem << 1) ^ ((rem >>> 11) * 0x1F25);
-      const bits = (version << 12) | rem;
+      const v = (ver << 12) | rem;
       for (let i = 0; i < 18; i++) {
-        const bit = ((bits >> i) & 1) === 1;
-        const a = Math.floor(i / 3), b = i % 3;
-        set(size - 11 + b, a, bit);
-        set(a, size - 11 + b, bit);
+        const d = ((v >>> i) & 1) === 1, a = size - 11 + i % 3, c = Math.floor(i / 3);
+        set(a, c, d); set(c, a, d);
       }
     }
 
-    // Zigzag data placement, two columns at a time, skipping the timing column.
-    let bitIdx = 0;
-    const totalBits = codewords.length * 8;
-    const nextBit = () => {
-      if (bitIdx >= totalBits) return false;
-      const bit = ((codewords[bitIdx >> 3] >> (7 - (bitIdx & 7))) & 1) === 1;
-      bitIdx++;
-      return bit;
-    };
-    let upward = true;
-    for (let right = size - 1; right >= 1; right -= 2) {
+    // Data, in the standard two-column zigzag from the bottom right.
+    const total = words.length * 8;
+    for (let right = size - 1, i = 0; right >= 1; right -= 2) {
       if (right === 6) right = 5;
-      for (let i = 0; i < size; i++) {
-        const row = upward ? size - 1 - i : i;
-        for (let c = 0; c < 2; c++) {
-          const col = right - c;
-          if (fixed[row][col]) continue;
-          m[row][col] = applyMask(nextBit(), row, col, mask);
-        }
-      }
-      upward = !upward;
-    }
-
-    writeFormat(m, size, level, mask);
-    return { size, modules: m };
-  }
-
-  function applyMask(bit, r, c, mask) {
-    let flip;
-    switch (mask) {
-      case 0: flip = (r + c) % 2 === 0; break;
-      case 1: flip = r % 2 === 0; break;
-      case 2: flip = c % 3 === 0; break;
-      case 3: flip = (r + c) % 3 === 0; break;
-      case 4: flip = (Math.floor(r / 2) + Math.floor(c / 3)) % 2 === 0; break;
-      case 5: flip = ((r * c) % 2) + ((r * c) % 3) === 0; break;
-      case 6: flip = (((r * c) % 2) + ((r * c) % 3)) % 2 === 0; break;
-      default: flip = (((r + c) % 2) + ((r * c) % 3)) % 2 === 0; break;
-    }
-    return flip ? !bit : bit;
-  }
-
-  function writeFormat(m, size, level, mask) {
-    const data = (ECL_BITS[level] << 3) | mask;
-    let rem = data;
-    for (let i = 0; i < 10; i++) rem = (rem << 1) ^ ((rem >>> 9) * 0x537);
-    const bits = ((data << 10) | rem) ^ 0x5412;
-    const get = i => ((bits >> i) & 1) === 1;
-
-    for (let i = 0; i <= 5; i++) m[8][i] = get(i);
-    m[8][7] = get(6); m[8][8] = get(7); m[7][8] = get(8);
-    for (let i = 9; i < 15; i++) m[14 - i][8] = get(i);
-
-    for (let i = 0; i < 8; i++) m[size - 1 - i][8] = get(i);
-    for (let i = 8; i < 15; i++) m[8][size - 15 + i] = get(i);
-    m[size - 8][8] = true;
-  }
-
-  // ── Mask selection (penalty rules from the spec) ───────────────────────
-  function penalty(m, size) {
-    let score = 0;
-
-    // Rule 1: runs of five or more same-coloured modules in a line.
-    for (let i = 0; i < size; i++) {
-      let runRow = 1, runCol = 1;
-      for (let j = 1; j < size; j++) {
-        runRow = m[i][j] === m[i][j - 1] ? runRow + 1 : 1;
-        if (runRow === 5) score += 3; else if (runRow > 5) score += 1;
-        runCol = m[j][i] === m[j - 1][i] ? runCol + 1 : 1;
-        if (runCol === 5) score += 3; else if (runCol > 5) score += 1;
+      const up = ((right + 1) & 2) === 0;
+      for (let v = 0; v < size; v++) for (let j = 0; j < 2; j++) {
+        const x = right - j, y = up ? size - 1 - v : v;
+        if (!fn[y][x] && i < total) { mod[y][x] = (words[i >>> 3] >>> (7 - (i & 7))) & 1; i++; }
       }
     }
 
-    // Rule 2: 2x2 blocks of one colour.
-    for (let r = 0; r < size - 1; r++)
-      for (let c = 0; c < size - 1; c++)
-        if (m[r][c] === m[r][c + 1] && m[r][c] === m[r + 1][c] && m[r][c] === m[r + 1][c + 1]) score += 3;
-
-    // Rule 3: finder-like 1:1:3:1:1 patterns with a 4-module quiet run.
-    const A = [true, false, true, true, true, false, true, false, false, false, false];
-    const B = [false, false, false, false, true, false, true, true, true, false, true];
-    const matches = (get, start) => {
-      let a = true, b = true;
-      for (let k = 0; k < 11; k++) {
-        const v = get(start + k);
-        if (v !== A[k]) a = false;
-        if (v !== B[k]) b = false;
-      }
-      return a || b;
+    const applyMask = m => {
+      const f = MASKS[m];
+      for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (!fn[y][x] && f(x, y)) mod[y][x] ^= 1;
     };
-    for (let i = 0; i < size; i++)
-      for (let j = 0; j + 11 <= size; j++) {
-        if (matches(k => m[i][k], j)) score += 40;
-        if (matches(k => m[k][i], j)) score += 40;
+    let best = 0, bestScore = Infinity;
+    for (let m = 0; m < 8; m++) {
+      applyMask(m); drawFormat(m);
+      const s = penalty(mod, size);
+      if (s < bestScore) { bestScore = s; best = m; }
+      applyMask(m);
+    }
+    applyMask(best); drawFormat(best);
+    return { version: ver, ecl: ECL_NAMES[ecl], mask: best, size, modules: mod };
+  }
+
+  function penalty(mod, size) {
+    let p = 0, dark = 0;
+    const FIND_A = [1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0], FIND_B = [0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1];
+    const line = get => {
+      let color = -1, run = 0;
+      const padded = [0, 0, 0, 0];
+      for (let i = 0; i < size; i++) {
+        const c = get(i);
+        padded.push(c);
+        if (c === color) { run++; if (run === 5) p += 3; else if (run > 5) p++; }
+        else { color = c; run = 1; }
       }
-
-    // Rule 4: deviation from a 50% dark ratio.
-    let dark = 0;
-    for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) if (m[r][c]) dark++;
-    const pct = (dark * 100) / (size * size);
-    score += Math.floor(Math.abs(pct - 50) / 5) * 10;
-    return score;
+      padded.push(0, 0, 0, 0);
+      for (let k = 0; k + 11 <= padded.length; k++) {
+        let a = true, b = true;
+        for (let j = 0; j < 11 && (a || b); j++) {
+          if (padded[k + j] !== FIND_A[j]) a = false;
+          if (padded[k + j] !== FIND_B[j]) b = false;
+        }
+        if (a || b) p += 40;
+      }
+    };
+    for (let y = 0; y < size; y++) line(x => mod[y][x]);
+    for (let x = 0; x < size; x++) line(y => mod[y][x]);
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+      if (mod[y][x]) dark++;
+      if (x < size - 1 && y < size - 1) {
+        const c = mod[y][x];
+        if (c === mod[y][x + 1] && c === mod[y + 1][x] && c === mod[y + 1][x + 1]) p += 3;
+      }
+    }
+    p += 10 * Math.floor(Math.abs(dark * 100 / (size * size) - 50) / 5);
+    return p;
   }
 
-  function encode(text, level) {
-    level = level || 'M';
-    if (!ECB[level]) throw new Error('QR: bad EC level ' + level);
-    const bytes = utf8Bytes(String(text));
-
-    let version = 0;
-    for (let v = 1; v <= 40; v++) {
-      const need = 4 + charCountBits(v) + bytes.length * 8;
-      if (need <= dataCapacity(v, level) * 8) { version = v; break; }
-    }
-    if (!version) throw new Error('QR: payload too large (' + bytes.length + ' bytes)');
-
-    const codewords = interleave(buildCodewords(bytes, version, level), version, level);
-
-    let best = null, bestScore = Infinity;
-    for (let mask = 0; mask < 8; mask++) {
-      const cand = buildMatrix(version, level, codewords, mask);
-      const s = penalty(cand.modules, cand.size);
-      if (s < bestScore) { bestScore = s; best = cand; }
-    }
-    best.version = version; best.level = level;
-    return best;
-  }
-
-  // Render to SVG. Horizontal runs are merged into single rects so the
-  // markup stays small enough to inline comfortably.
-  function svg(text, opts) {
-    opts = opts || {};
-    const px = opts.size || 320;
-    const margin = opts.margin == null ? 4 : opts.margin;
-    const { size, modules } = encode(text, opts.level);
-    const total = size + margin * 2;
-    let rects = '';
-    for (let r = 0; r < size; r++) {
-      let c = 0;
-      while (c < size) {
-        if (!modules[r][c]) { c++; continue; }
+  // One path, merged into horizontal runs, with the 4-module quiet zone.
+  function svg(text, label) {
+    const q = encode(text);
+    if (!q) return '';
+    const B = 4, n = q.size + B * 2;
+    let d = '';
+    for (let y = 0; y < q.size; y++) {
+      for (let x = 0; x < q.size;) {
+        if (!q.modules[y][x]) { x++; continue; }
         let run = 1;
-        while (c + run < size && modules[r][c + run]) run++;
-        rects += '<rect x="' + (c + margin) + '" y="' + (r + margin) + '" width="' + run + '" height="1"/>';
-        c += run;
+        while (x + run < q.size && q.modules[y][x + run]) run++;
+        d += 'M' + (x + B) + ' ' + (y + B) + 'h' + run + 'v1h-' + run + 'z';
+        x += run;
       }
     }
-    return '<svg xmlns="http://www.w3.org/2000/svg" width="' + px + '" height="' + px +
-           '" viewBox="0 0 ' + total + ' ' + total + '" shape-rendering="crispEdges" role="img" aria-label="QR code">' +
-           '<rect width="' + total + '" height="' + total + '" fill="' + (opts.light || '#fff') + '"/>' +
-           '<g fill="' + (opts.dark || '#000') + '">' + rects + '</g></svg>';
+    return '<svg class="ih-qr-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + n + ' ' + n + '" ' +
+      'shape-rendering="crispEdges" role="img" aria-label="' + (label || 'QR code') + '" ' +
+      'data-version="' + q.version + '">' +
+      '<rect width="' + n + '" height="' + n + '" fill="#fff"/><path fill="#000" d="' + d + '"/></svg>';
   }
 
-  global.QR = { encode, svg, capacityBytes: (v, l) => dataCapacity(v, l) };
-})(typeof window !== 'undefined' ? window : globalThis);
+  // A QR code of a whole class plan is dense, so the panel's small copy
+  // opens full screen: on a laptop or TV that is big enough for any phone
+  // camera across the room.
+  function showBig(sourceId, caption) {
+    const src = typeof document !== 'undefined' && document.getElementById(sourceId);
+    const text = src ? src.textContent : '';
+    const code = text && svg(text, 'QR code to scan');
+    if (!code) return;
+    let o = document.getElementById('ih-qr-big');
+    if (!o) {
+      o = document.createElement('div');
+      o.id = 'ih-qr-big';
+      o.className = 'qr-modal ih-qr-big';
+      document.body.appendChild(o);
+      o.addEventListener('click', () => { o.style.display = 'none'; });
+    }
+    o.innerHTML = '<button class="modal-close qr-close" type="button" aria-label="Close">✕</button>' +
+      '<div class="ih-qr-big-code">' + code + '</div>' +
+      '<div class="ih-qr-big-cap">' + (caption || 'Point a phone camera at the code') + ' · tap to close</div>';
+    o.style.display = 'flex';
+  }
+
+  const esc = s => String(s).replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  // The scan code plus its caption, for a share panel. The text also goes
+  // into a hidden #sourceId, which the enlarged view is drawn from, so the
+  // small and the big code can never disagree.
+  function panelHtml(text, sourceId, caption) {
+    const q = encode(text);
+    const code = q && svg(text, 'QR code: ' + caption);
+    if (!code) {
+      return '<div class="ih-qr-wrap"><div class="qr-link-hint">This link is too long for a scan ' +
+        'code, so send the link instead.</div></div>';
+    }
+    return '<div class="ih-qr-wrap">' +
+      '<span id="' + sourceId + '" hidden>' + esc(text) + '</span>' +
+      '<button class="ih-qr-btn" type="button" aria-label="Show the scan code full screen" ' +
+        'data-onclick="ihShowQRBig(\'' + sourceId + '\',\'' + caption + '\')">' + code + '</button>' +
+      '<div class="ih-qr-cap">📷 ' + caption + ' · ' +
+        (q.version > 12 ? '<b>tap the code to make it big enough to scan</b>' : 'tap to enlarge') +
+      '</div></div>';
+  }
+
+  const api = { encode, svg, panelHtml };
+  if (typeof window !== 'undefined') {
+    window.IHQR = api;
+    window.ihShowQRBig = showBig;
+  }
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+})();

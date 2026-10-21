@@ -78,9 +78,24 @@ their own rounds and reps.
    node serve.js
    ```
 
-Your browser opens automatically. The terminal also prints a **second
-address** for phones — something like `http://192.168.1.243:8080`. Any
-phone on the studio wifi can reach that.
+Your browser opens automatically on `http://localhost:8080`. The terminal
+also prints a **second address** for phones — something like
+`http://192.168.1.243:8080`. Any phone on the studio wifi can reach that,
+and the app's QR codes use it automatically.
+
+**On the laptop itself, always use the `localhost` address.** The browser
+keeps saved classes separately for every address *and* port. The wifi
+address changes whenever the router feels like it, and a different port is
+a different address too — open the app on either and it looks empty (your
+classes are still there, on the old address). That is why the server no
+longer moves to another port when 8080 is busy: it stops and tells you to
+close the other copy instead. If you really need another port, pass
+`--port` and expect an empty app there.
+
+The server answers anyone on the same wifi (that is how phones reach it),
+but only with the app's own files — never `serve.config.json`, the tests,
+or anything outside the folder. Use `--host 127.0.0.1` to keep it to this
+computer only.
 
 **Leave the terminal window open while class is running.** Closing it
 stops the server. Press `Ctrl+C` when you want to stop it deliberately.
@@ -157,27 +172,67 @@ middle of a live class — stop the class first.
 
 ## Access codes
 
-The app asks for a code before it shows anything. There are two:
+The app asks for a studio name and password before it shows anything. The
+sign-in screen shows the Inspire Habits barbell-and-heart logo on a coral
+background and says "Please enter your studio name and password."
 
-| Code | Gets you |
+- **Studio name** is **IFW**, filled in for you (case doesn't matter). To use
+  a different name, change `IH_STUDIO_NAME` near the top of the sign-in code in
+  `auth.js`.
+- **Password** is one of two codes, both generated in **🔒 Access Codes**:
+
+| Password | Gets you |
 |---|---|
 | **Instructor** | The whole builder — generate, edit, save, run class, equipment |
 | **Athlete** | Their own tracking page for the class they were sent, nothing else |
 
-**Both codes have been changed** from the ones this app shipped with.
-Neither is written down anywhere in these files — only a salted SHA-256
-hash of each lives in `auth.js`, and a hash can't be turned back into the
-code. If you forget one, you don't recover it; you set a new one (below).
+The studio name is not a secret, only a prompt. The password is what keeps
+people out.
+
+**Both codes have been changed** from the ones this app shipped with, and
+are now long random codes in the strongest (v3) format. Neither is written
+down anywhere in these files — only a salted, stretched check value for
+each lives in `auth.js`, and it can't be turned back into the code. If you
+forget one, you don't recover it; you set a new one (below).
+
+**How v3 codes work.** Each line looks like
+`v3$100000$<salt>$<check>`. When someone signs in, the code they type is
+stretched with PBKDF2 (100,000 rounds, a fresh random salt per code) into
+a secret key, and only a fingerprint of that key (`<check>`) is published.
+The saved sign-in on the device holds the key itself, so it can only be
+created by someone who actually typed the right code: copying the line out
+of `auth.js`, or building a sign-in from what's in the source, no longer
+opens the builder. Codes **ignore capitals, spaces and dashes**, so
+`ABCD EFGH` and `abcd-efgh` are the same code. Sign-in takes a moment
+(a spinner shows while it checks) — that's the point.
+
+Older `v2$…` and plain 64-character lines still work, but their saved
+sign-ins can be faked by anyone who reads the source. The Access Codes
+panel shows a reminder while any line is older than v3; **you can keep the
+same code** — type it again in **Generate the line** and paste the new
+`v3$…` line in. Sessions expire after 30 days unused for instructors and
+90 for athletes (using the app keeps you signed in). After five wrong
+guesses in a row the sign-in screen makes you wait, up to two minutes
+between tries; the count starts again an hour later.
+
+On a **shared or borrowed device**, tick *"Shared or borrowed device —
+forget me when this window closes"* on the sign-in screen. The sign-in then
+lasts only until the browser window closes. The **Who's teaching?** screen
+also has a *Sign this laptop out* button.
 
 > Never paste a real code into this README, a commit message, or an issue.
 > This repository is public, and anything written here is published with the
-> app. Only the hash belongs in the files.
+> app. Only the `v3$…` check line belongs in the files. A good code is long
+> and random — four groups of four letters and numbers is about 79 bits,
+> far beyond guessing even with the source in hand.
 
 The lock screen warns you whenever either code is still a shipped default,
 and names which one. No warning means both have been changed.
 
 An athlete who opens the bare site without a class link gets a
-"nothing to track yet" screen rather than your builder.
+"nothing to track yet" screen rather than your builder. If they opened a
+class link in the last 12 hours, that screen has a **Reopen last class**
+button, so closing the tab mid-class costs one tap.
 
 **Most athletes never type anything.** The class link carries an unlock
 token, so opening it takes them straight to their tracking page. The
@@ -191,7 +246,11 @@ already handed out, which is usually what you want.
 2. Choose which code, type the new one, tap **Generate the line**
 3. Paste the line it gives you over the matching line in `auth.js`
 4. Save and re-publish — commit and push, if you're on GitHub Pages
-5. Hard-refresh the page (**Ctrl-Shift-R**, or **Cmd-Shift-R** on a Mac)
+5. Wait for the **Update ready — Reload** bar and tap it (or hard-refresh:
+   **Ctrl-Shift-R**, or **Cmd-Shift-R** on a Mac)
+
+The panel won't accept the other role's current code (that would give every
+athlete the builder) or a code this app shipped with.
 
 The file stores a hash, never the code itself, so nobody can read your
 code out of the source. Changing a code signs everyone out, including
@@ -214,20 +273,35 @@ The app is built to fail shut. If `auth.js` is damaged the app won't open
 at all, rather than opening for everyone:
 
 - **"Access codes are damaged"** — one of the two lines between the PASTE
-  markers isn't a valid code line. Each must be 64 characters of `0-9`
-  and `a-f`, and the two must be different. Re-copy from the panel and
-  paste over the whole line.
+  markers isn't a valid code line. Each must be a `v3$…` line (or an older
+  `v2$…` line, or 64 characters of `0-9` and `a-f`), and the two must be
+  different. Re-copy from the panel and paste over the whole line.
 - **"Inspire Habits could not start"** — `auth.js` has a syntax error,
   usually a missing quote or comma from a paste. The browser console
   (**F12 → Console**) names the line.
+
+### Forgot a code
+
+Codes can't be recovered, only replaced — and you can do that without
+signing in:
+
+1. Open the app (the sign-in screen is fine) and press **F12 → Console**.
+2. Type `ihMakeLine('your-new-code')` and press Enter. It prints a
+   `v3$…` line for that code.
+3. Paste it over the matching line in `auth.js` (keep the quotes and the
+   comma), re-publish, and sign in with the new code.
+
+Do it for the athlete code too if that one is lost; the two must differ.
 
 ### What this is and isn't
 
 **It's a doorway, not a vault.**
 
 The app is a folder of files with no server behind it, so the code check
-has to run inside the visitor's own browser. Anyone who knows to open
-developer tools can read straight past it.
+has to run inside the visitor's own browser. v3 closes the easy shortcuts
+(pasting the line, or forging a saved sign-in from the source), but someone
+who edits the running JavaScript in their own browser can still get past
+it.
 
 It will keep out the public, the curious, and search engines. It will not
 stop someone who is genuinely trying. Don't put anything in this app
@@ -270,9 +344,25 @@ old version.
 
 ### Getting the link to people
 
-The share panel shows the class link with a **📋 Copy link** button. Copy it
-and paste it into your group chat, a text, or whatever the class already
-uses. Everyone who opens it lands on their own tracking page.
+The share panel shows a **scan code** (QR) and the class link with a
+**📋 Copy link** button. Everyone who opens either one lands on their own
+tracking page.
+
+- **Scan code** — the whole class travels inside the link, so the code is
+  dense. **Tap it** to show it full screen on the laptop or TV, and athletes
+  point their phone camera at it. Tap again (or press Esc) to close. The code
+  is drawn by the app itself (`qr.js`), so it works offline and nothing is
+  sent anywhere to make it.
+- **Why the code can differ from the link** — on timed classes most of the
+  link is coaching notes (cue, easier / harder). To keep the code readable,
+  the scan code leaves those out and each phone fills them back in from its
+  own exercise library. Custom moves and edited cues show without notes on a
+  scanned phone; the copied link always carries everything.
+- **Copy link** — paste it into your group chat, a text, or whatever the
+  class already uses.
+
+No code is shown while the app is on `localhost` or opened from a file,
+because no phone could open that address.
 
 If the copy button can't reach the clipboard — some browsers only allow it
 on https addresses — the link is selected for you and you can press
@@ -468,6 +558,207 @@ back if you put a number in later.
 
 **💾 Save as Default** remembers it for every future class.
 
+### Limiting how many people can be on a prop at once
+
+Some gear can't serve the whole room even if you own plenty of it: cable
+bands hang off a door anchor and sliders need floor space. Each row has a
+**Max at once** box for this. **Cable Bands and Sliders default to 3** — at
+most 3 people in the whole class are ever on them at the same time.
+
+For a class bigger than that cap the app:
+
+- keeps the move, but treats it as a rotating station instead of dropping it
+  (so sliders no longer vanish from a class of 12),
+- uses it in at most 2 slots of the plan,
+- keeps it out of all-at-once formats (You-Go-I-Go and Core Burner),
+- labels it "max 3 at once" on the setup screen, in the equipment list and on
+  the exercise card.
+
+Clear the box to remove the cap. A cap never creates more gear: if you own
+2 cable bands and the cap is 3, the limit is still 2.
+
+---
+
+## Choosing the muscle focus
+
+Muscle Focus is a two-step pick:
+
+1. **Region** — Full Body, Upper, Lower, Core, Cardio or Custom.
+2. **Emphasis** (optional) — appears under Upper and Lower:
+   - Upper → Push, Pull, Chest + Back, Shoulders + Arms
+   - Lower → Quads + Calves, Glutes + Hamstrings, Glutes + Hips
+     (abductors and adductors)
+
+"All upper" / "All lower" keeps the broad version.
+
+### Custom
+
+Pick **Custom** and tick any muscles you like. **Main muscles** (chest, back,
+shoulders, quads, hamstrings, glutes, core) are guaranteed to get direct work
+in the plan. **Smaller muscles** (biceps, triceps, rear delts, grip, calves,
+adductors, abductors, hip flexors, obliques, lower back) are worked in as
+accessories. You must pick at least one. The choice is saved with the class,
+history and scheduled plans, and shows in the coverage panel.
+
+Classes saved before this change still load — the older Push, Pull and
+Glutes themes are kept (Glutes is now labelled "Glutes + Hamstrings").
+
+---
+
+## Running a live class
+
+- **Voice cues** — 🔊 button (instructor and athlete screens). Speaks the
+  next exercise and the countdown. Off by default; each device remembers its
+  own setting.
+- **Haptics** — phones buzz with different patterns for work, rest and
+  switch. Needs a browser that supports vibration (Android Chrome; iOS
+  doesn't).
+- **TV mode** — shows only the clock and current exercise, huge. Exit with
+  the button in the corner or **Esc**.
+- **Swap live** — the ⇄ button beside any upcoming step replaces the
+  exercise without touching the clock or the length of the class.
+- **Injury and regression flags** — in the roster, tap a person's flag
+  button (knee, shoulder, back, wrist, high-impact, pregnancy). When a
+  flagged exercise comes up the instructor sees who it affects. High-impact
+  uses each exercise's impact tag; the other flags are matched by keywords in
+  the exercise name, so treat them as a prompt, not a guarantee. Flags are
+  never shown on the athlete or public screens.
+- **Class summary** — finishing a class opens a summary with a notes box;
+  notes are saved with the class history. You can copy the summary.
+- **Trends** — History → Trends shows classes per week, average
+  attendance per week and muscle focus over the last 30 days.
+- **Class card** — prints a one-page card of the class.
+- **Personal bests** — athletes see their best for the class they're on and
+  a note when they beat their previous one.
+- **Phones follow the room clock** — if the instructor pauses, phones pause
+  too; if a phone was asleep it catches up and offers a one-tap resync link.
+- **Run it from your phone** — see the next section.
+- **Backup safety net** — the app keeps a second copy of your data in
+  IndexedDB. If the browser clears localStorage, you're offered a one-tap
+  restore. It also nudges you to export a backup file (after 14 days with
+  none, then every 30).
+
+### Timer controls and class length
+
+- Generated classes land within about a minute of the length you pick, for
+  every style. The plan header shows **planned vs target** time (e.g.
+  "19 min 48s of 20 min"); **Fit to time** trims or tops up a plan you've
+  edited. Tabata may end on a shorter finisher block, and You-Go-I-Go on a
+  partial last round, so the class finishes on time.
+- **⏭ Skip exercise** jumps past every interval of the current move.
+  **End class and log** finishes early, logs the class once and clears the
+  "resume class?" prompt.
+- Pausing keeps the exact time left; the live class is saved every few
+  seconds, so a reload or a locked screen resumes where you were.
+- A 3-2-1 beep before each work interval (and a spoken "3, 2, 1" and
+  "Halfway" with voice on). During rest the timer shows the next move and its
+  equipment; during work it shows easier/harder options. The header shows
+  time left in class.
+- Removing or swapping a move in the plan shows an **Undo** toast. The app
+  asks before regenerating over your edits and before a 21st saved class
+  pushes out the oldest.
+- The swap list includes your custom exercises and respects your equipment
+  and the per-prop people limits.
+
+### Mixed ability
+
+- Each move in the plan shows its Beginner / Intermediate / Advanced version.
+  **Change** picks a different move for one level (marked ✎); the choice is
+  saved with the class.
+- Beginners never get a high-impact move — jumps are swapped for a low-impact
+  version — and on timed moves they're told when to rest (about 75% of the
+  interval). Substitutes only use equipment the class has.
+- On the TV and phones each level's own move is the big headline.
+- Checking people in sets the participant count (capped at 16, with a
+  warning).
+
+### Run the class from your phone
+
+When you tap **Go Live**, the app opens your device's share sheet with a link
+to the live class for *you* (the instructor). Pick **AirDrop** (or Messages,
+Mail, Copy…) and open the link on your phone: it lands on the instructor timer
+with the class loaded.
+
+- **AirDrop is reached through the browser's share sheet**, because a web page
+  can't send an AirDrop by itself. It appears on Safari on Mac, iPhone and iPad
+  and needs the app on `https://`. On plain `http://`, or in browsers without a
+  share sheet, you get a "Run this class from your phone?" bar instead, with a
+  copy-link panel behind it. `localhost` and `file://` can't be opened from a
+  phone; the panel says so.
+- **No scan code here.** This link carries the whole class for the
+  instructor timer (5,000–6,600 characters), which is more than any QR code
+  can hold (2,953). Use AirDrop, Messages or Copy link.
+- **First time on the phone**, type your instructor code once. The phone
+  remembers it.
+- **Join the class clock** — if the class is already running, tap the bar's
+  **Join the class clock** button and the phone jumps to the interval the room
+  is on. The link carries the class start time, so if you paused the class,
+  resend it with the **📲 Phone** button.
+- **Privacy** — the link holds the exercises only. No roster, flags,
+  notes or group names. It is a long link (a few thousand characters) because
+  the whole plan travels inside it; nothing is stored on a server.
+- **Switch it off** with the checkbox under **Go Live**. The **📲 Phone**
+  button on the timer screens always sends on demand.
+
+## Offline use and updating
+
+A service worker caches the app so it opens with no signal, and instantly
+with one (only on `https://`, `localhost` or `127.0.0.1` — not `file://`).
+Each time the app opens it quietly checks for a newer copy. When there is
+one, the whole new set is downloaded in the background and an **Update
+ready — Reload** bar appears at the bottom. Tap **Reload** (it asks first
+if a class timer is running), or just carry on — the new copy is used the
+next time the app opens. A page never runs half old and half new files.
+
+**When you re-publish, bump `APP_VERSION` at the top of `sw.js`.** Changed
+files are noticed even without the bump, but the bump also clears the old
+cache.
+
+### Undo and safety copies
+
+- **Deleting a scheduled plan** shows an **Undo** bar for ten seconds.
+- **Import → Replace** first downloads a copy of the plans it is about to
+  replace (`…before_replace….json`) and keeps one on the laptop; an **Undo**
+  bar lets you put them straight back.
+- The Plans screen shows **when you last backed up** on this device.
+- Instructor names can be changed: tap the small emoji button next to your
+  name, type the new name, **Save name**.
+
+## Security notes
+
+The page has a Content Security Policy (`script-src 'self'`) and no inline
+event handlers; buttons use `data-onclick` attributes run by `actions.js`.
+That means an injected `<script>` or `onerror=` won't run. If you add a
+button, use `data-onclick`, not `onclick`. `actions.js` only calls the
+app's own functions and a few harmless element methods — never `window`,
+storage, `open`, `eval` and the like — and anything user-typed that goes
+into an attribute is escaped first.
+
+## Tests
+
+`npm test` (Node 20+, no packages to install) checks that every script
+parses, that the auth hashing matches Node's crypto, that all `data-on*`
+handlers compile (and that no JS builds an inline handler), that the service
+worker caches every script, that the class-wide equipment cap works, and that
+the muscle themes and custom muscle picks resolve, and that the instructor
+phone link packs and unpacks losslessly. `tests/platform.test.js` covers
+the platform: crafted `data-on*` attributes can't reach storage or `open`,
+sign-in throttling and session expiry, legacy codes still unlock, restoring
+lost data never overwrites newer data, and `serve.js` refuses hidden files.
+`tests/core.test.js` checks every class style lands on time at 20–90 min,
+pause/resume, skip and end-class logging, crafted-link escaping, and that
+plan edits keep extra fields and can be undone. `tests/live.test.js` covers the athlete and phone
+links (stale classes, paused classes, crafted links, round limits).
+`tests/content.test.js` checks the exercise data: no high-impact beginner
+moves, safe easier versions, and the per-level overrides.
+`tests/qr.test.js` checks the scan-code encoder against codes produced by a
+reference encoder (Python `qrcode`) and decoded by ZXing.
+
+## Not done yet
+
+ES-module split of the scripts, splitting `style.css`, a light theme, and an
+ESLint setup. None are needed for the app to work.
+
 ---
 
 ## Files
@@ -475,6 +766,11 @@ back if you put a number in later.
 | File | What it is |
 |---|---|
 | `index.html` | The app — open this one |
+| `actions.js` | Runs the `data-on*` button handlers (CSP-safe) |
+| `features.js` | Voice, haptics, TV mode, swap, flags, summary, trends, class card |
+| `boot.js` | Service-worker registration and start-up wiring |
+| `sw.js` | Offline cache — bump `APP_VERSION` when you publish |
+| `package.json`, `tests/` | `npm test` |
 | `app.js` | Main logic, equipment inventory, plan builder |
 | `exercise-db.js` | The exercise library, grouped by equipment |
 | `muscle-map.js` | Muscle grouping and coverage balancing |
@@ -482,6 +778,8 @@ back if you put a number in later.
 | `mixed_ability.js` | Beginner / Intermediate / Advanced handling |
 | `editor.js` | Plan editing |
 | `participant.js` | The class share link and the athlete phone pages |
+| `remote.js` | The instructor phone link: share sheet / AirDrop, and opening it on the phone |
+| `qr.js` | Draws the scan codes in the share panels (offline, no outside service) |
 | `profiles.js` | Instructor profiles and the "Who's teaching?" picker |
 | `auth.js` | The two access codes |
 | `storage.js` | The one safe door to browser storage (see the Safari notes above) |

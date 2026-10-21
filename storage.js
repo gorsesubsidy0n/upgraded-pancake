@@ -88,6 +88,7 @@ const IHStore = (function () {
       try {
         ls.setItem(key, v);
         delete memory[key];
+        mirrorWrite(key, v);
         return true;
       } catch (e) {
         if (isQuota(e) && mode === 'ok') mode = 'full';
@@ -95,11 +96,13 @@ const IHStore = (function () {
     }
     memory[key] = v;
     usedMemory = true;
+    mirrorWrite(key, v);
     return false;
   }
 
   function remove(key) {
     delete memory[key];
+    mirrorWrite(key, null);
     const ls = raw();
     if (!ls) return;
     try { ls.removeItem(key); } catch (e) {}
@@ -224,7 +227,197 @@ const IHStore = (function () {
     try { ss.removeItem(key); } catch (e) {}
   }
 
+  // ── IndexedDB mirror ──────────────────────────────────────
+  // localStorage is the source of truth because the whole app reads it
+  // synchronously at boot. But Safari deletes script-writable storage after
+  // seven days without a visit, and a studio that runs one class a week for
+  // a term lands right on that line. IndexedDB is mirrored write-behind, so
+  // if localStorage comes back empty a restore can be offered. Not every
+  // browser purges both, so this is a safety net, not a guarantee.
+  const MIRROR_DB = 'ih-mirror', MIRROR_STORE = 'kv';
+  const mirrorQueue = new Map();
+  let mirrorTimer = null;
+  let mirrorDbPromise = null;
+  // Held until checkMirror has looked: the app writes empty defaults on a
+  // fresh boot, and mirroring those first would erase the very backup we
+  // are about to offer. Keys found lost stay protected until the user
+  // chooses to restore or discard.
+  let mirrorHold = true;
+  const protect = new Set();
+
+  function mirrored(key) {
+    return key.indexOf('hiit_') === 0 && key.indexOf('live_session') === -1;
+  }
+
+  function openMirror() {
+    if (mirrorDbPromise) return mirrorDbPromise;
+    mirrorDbPromise = new Promise(function (resolve) {
+      try {
+        if (!window.indexedDB) return resolve(null);
+        const req = indexedDB.open(MIRROR_DB, 1);
+        req.onupgradeneeded = function () { req.result.createObjectStore(MIRROR_STORE); };
+        req.onsuccess = function () { resolve(req.result); };
+        req.onerror = req.onblocked = function () { resolve(null); };
+      } catch (e) { resolve(null); }
+    });
+    return mirrorDbPromise;
+  }
+
+  function mirrorWrite(key, value) {
+    if (!mirrored(key)) return;
+    mirrorQueue.set(key, value);
+    if (mirrorTimer || mirrorHold) return;
+    mirrorTimer = setTimeout(flushMirror, 600);
+  }
+
+  function flushMirror() {
+    mirrorTimer = null;
+    if (mirrorHold || !mirrorQueue.size) return;
+    // Keys still waiting on the restore question stay queued (not dropped):
+    // once the user answers, the newest value for them still has to reach
+    // the mirror.
+    const batch = [];
+    Array.from(mirrorQueue.entries()).forEach(function (kv) {
+      if (protect.has(kv[0])) return;
+      batch.push(kv);
+      mirrorQueue.delete(kv[0]);
+    });
+    if (!batch.length) return;
+    openMirror().then(function (db) {
+      if (!db) return;
+      try {
+        const tx = db.transaction(MIRROR_STORE, 'readwrite');
+        const os = tx.objectStore(MIRROR_STORE);
+        batch.forEach(function (kv) {
+          if (kv[1] === null) os.delete(kv[0]); else os.put(kv[1], kv[0]);
+        });
+      } catch (e) {}
+    });
+  }
+
+  function mirrorAll() {
+    const ls = raw();
+    if (!ls) return;
+    try {
+      for (let i = 0; i < ls.length; i++) {
+        const k = ls.key(i);
+        if (k && mirrored(k)) mirrorQueue.set(k, ls.getItem(k));
+      }
+    } catch (e) {}
+    if (mirrorQueue.size && !mirrorTimer && !mirrorHold) mirrorTimer = setTimeout(flushMirror, 0);
+  }
+
+  // The app writes defaults ('[]', '{}') on boot, so "missing" alone would
+  // miss a purge that was followed by a fresh start.
+  function isLost(key, mirrorValue) {
+    const cur = get(key);
+    if (cur === null) return true;
+    return /^(\[\]|\{\}|null|"")$/.test(cur) && String(mirrorValue).length > cur.length;
+  }
+
+  /** Calls back with { lost: {key: value}, count } — keys the mirror has
+   *  that localStorage no longer does. Also seeds the mirror with what is
+   *  already in localStorage, and asks the browser to treat storage as
+   *  persistent. */
+  function checkMirror(userCb) {
+    function cb(res) {
+      Object.keys(res.lost).forEach(function (k) { protect.add(k); });
+      mirrorHold = false;
+      if (mirrorQueue.size && !mirrorTimer) mirrorTimer = setTimeout(flushMirror, 600);
+      userCb(res);
+    }
+    try {
+      if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
+    } catch (e) {}
+    openMirror().then(function (db) {
+      if (!db) return cb({ lost: {}, count: 0 });
+      const lost = {};
+      let count = 0;
+      try {
+        const req = db.transaction(MIRROR_STORE, 'readonly').objectStore(MIRROR_STORE).openCursor();
+        req.onsuccess = function () {
+          const c = req.result;
+          if (c) {
+            if (isLost(c.key, c.value)) { lost[c.key] = c.value; count++; }
+            c.continue();
+          } else {
+            if (!count) mirrorAll();
+            cb({ lost: lost, count: count });
+          }
+        };
+        req.onerror = function () { cb({ lost: {}, count: 0 }); };
+      } catch (e) { cb({ lost: {}, count: 0 }); }
+    });
+  }
+
+  /** Writes the lost values back and lets the mirror follow again.
+   *  The restore bar can sit there for a whole class, so each key is
+   *  checked again now: if something real was saved under it meanwhile,
+   *  that newer data wins. Lists of items with an id are merged (items
+   *  only the backup has are added back); anything else is left alone.
+   *  @returns {{restored:number, merged:number, kept:number}} */
+  function restoreLost(lost) {
+    const res = { restored: 0, merged: 0, kept: 0 };
+    Object.keys(lost || {}).forEach(function (k) {
+      protect.delete(k);
+      const backup = lost[k];
+      if (backup === null || backup === undefined) return;
+      if (isLost(k, backup)) {
+        if (set(k, backup)) res.restored++; else res.kept++;
+        return;
+      }
+      const merged = mergeById(get(k), backup);
+      if (merged !== null && set(k, merged)) res.merged++;
+      else {
+        res.kept++;
+        const cur = get(k);
+        if (cur !== null) mirrorWrite(k, cur);
+      }
+    });
+    flushNow();
+    return res;
+  }
+
+  // Current items win; backup items whose id is not present are appended.
+  // Returns the merged JSON text, or null when the two can't be merged.
+  function mergeById(curText, backupText) {
+    let cur, bak;
+    try { cur = JSON.parse(curText); bak = JSON.parse(backupText); } catch (e) { return null; }
+    if (!Array.isArray(cur) || !Array.isArray(bak)) return null;
+    const hasId = function (x) { return x && typeof x === 'object' && x.id !== undefined && x.id !== null; };
+    if (!cur.every(hasId) || !bak.every(hasId)) return null;
+    const seen = new Set(cur.map(function (x) { return String(x.id); }));
+    const extra = bak.filter(function (x) { return !seen.has(String(x.id)); });
+    if (!extra.length) return null;
+    return JSON.stringify(cur.concat(extra));
+  }
+
+  function flushNow() {
+    if (mirrorHold) return;
+    if (mirrorTimer) clearTimeout(mirrorTimer);
+    flushMirror();
+  }
+
+  /** The user said no: the mirror becomes a copy of what is here now. */
+  function discardLost() {
+    protect.clear();
+    clearMirror();
+    mirrorAll();
+    flushNow();
+  }
+  function clearMirror() {
+    mirrorQueue.clear();
+    openMirror().then(function (db) {
+      if (!db) return;
+      try { db.transaction(MIRROR_STORE, 'readwrite').objectStore(MIRROR_STORE).clear(); } catch (e) {}
+    });
+  }
+
+  // A tab closed inside the 600 ms batching window must still reach the mirror.
+  try { window.addEventListener('pagehide', function () { if (mirrorTimer && !mirrorHold) { clearTimeout(mirrorTimer); flushMirror(); } }); } catch (e) {}
+
   return {
+    checkMirror: checkMirror, restoreLost: restoreLost, discardLost: discardLost,
     get: get, set: set, remove: remove,
     getJSON: getJSON, setJSON: setJSON,
     getSession: getSession, setSession: setSession, removeSession: removeSession,
@@ -237,6 +430,7 @@ const IHStore = (function () {
     isSafari: isSafari,
     isInstalled: isInstalled,
     usage: usage,
+    _mergeById: mergeById,
     /** Test seam: forget the probe result. */
     _reset: function () {
       mode = null; usedMemory = false;

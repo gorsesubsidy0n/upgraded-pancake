@@ -411,9 +411,13 @@ function analyzeCoverage(exercises, focusKey) {
   const directShare = majors.filter(m => m.strong).length / Math.max(1, majors.length);
   const assistShare = majors.filter(m => m.covered && !m.strong).length / Math.max(1, majors.length);
   const balanceBonus = balance.ok ? 1 : 0.85;
+  // A custom class of only smaller muscles has no majors to score, so judge
+  // it on how many of the chosen muscles actually got worked.
+  const minorShare = minors.length ? minors.filter(m => m.covered).length / minors.length : 1;
+  const baseScore = majors.length ? (directShare + assistShare * 0.5) : minorShare;
 
   return { majors, minors, gaps, weakGaps, byMuscle, conditioning, contract, balance,
-           balanceScore: Math.round(100 * (directShare + assistShare * 0.5) * balanceBonus) };
+           balanceScore: Math.round(100 * baseScore * balanceBonus) };
 }
 
 // ── COVERAGE PANEL UI ─────────────────────────────────────────
@@ -455,13 +459,17 @@ function renderCoveragePanel() {
     ? `<div class="cov-warn">⚠️ Not covered: <b>${report.gaps.map(id => muscleLabel(id)).join(', ')}</b> — add a prop or an exercise to close the gap.</div>`
     : report.weakGaps.length
     ? `<div class="cov-warn cov-warn-soft">ℹ️ Assist only: <b>${report.weakGaps.map(id => muscleLabel(id)).join(', ')}</b> — no exercise in your selected props makes this a prime mover.</div>`
-    : `<div class="cov-good">✅ All ${report.majors.length} major groups for this focus get direct work${report.conditioning ? ' · conditioning element included' : ''}.</div>`;
+    : report.majors.length
+    ? `<div class="cov-good">✅ All ${report.majors.length} major group${report.majors.length === 1 ? '' : 's'} for this focus get direct work${report.conditioning ? ' · conditioning element included' : ''}.</div>`
+    : `<div class="${report.minors.every(m => m.covered) ? 'cov-good' : 'cov-warn cov-warn-soft'}">${report.minors.every(m => m.covered)
+        ? '✅ Every muscle you picked is worked in this plan.'
+        : 'ℹ️ Not worked: <b>' + report.minors.filter(m => !m.covered).map(m => m.label).join(', ') + '</b> — no exercise in your selected props targets it.'}</div>`;
 
   host.innerHTML = `
     <div class="cov-header">
       <span class="cov-title">🧬 Muscle Coverage</span>
       <span class="cov-score ${report.gaps.length ? 'cov-score-warn' : ''}">${report.balanceScore}% balanced</span>
-      <button class="cov-rebalance-btn" onclick="rebalanceWorkout()" title="Re-pick exercises with the same settings">🔀 Rebalance</button>
+      <button class="cov-rebalance-btn" data-onclick="rebalanceWorkout()" title="Re-pick exercises with the same settings">🔀 Rebalance</button>
     </div>
     ${gapLine}
     <div class="cov-section-label">Major groups</div>
@@ -525,8 +533,12 @@ function renderRecentStrip(classes) {
 /** Re-run selection with identical settings — new exercises, same guarantees. */
 function rebalanceWorkout() {
   if (!state.workout) return;
+  if (state.workout._edited && typeof askConfirm === 'function' &&
+      !askConfirm('Rebalance replaces every exercise, including the changes you made by hand. Continue?')) return;
   const keepStyle = state.workout.style;
-  generateWorkout({ forceStyle: keepStyle, silent: true });
+  const before = state.workout;
+  generateWorkout({ forceStyle: keepStyle, silent: true, force: true });
+  if (state.workout === before) return;
   showToast('🔀 Rebalanced — coverage kept, exercises refreshed');
 }
 
