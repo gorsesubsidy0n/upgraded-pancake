@@ -386,8 +386,13 @@
       planMissing: clockDriven && !plan && seq.length > 0,
       info: plan ? moveInfo(w, seq) : null,
       sid: workoutSid(w),
-      title: (w.styleCfg && w.styleCfg.name ? w.styleCfg.name : w.style) + ' · ' + (w.muscle || 'full') + ' focus',
+      title: funThemeTitle(w) + (w.styleCfg && w.styleCfg.name ? w.styleCfg.name : w.style) + ' · ' + (w.muscle || 'full') + ' focus',
     };
+  }
+
+  function funThemeTitle(w) {
+    const t = typeof ihFunThemeById === 'function' ? ihFunThemeById(w.funTheme) : null;
+    return t ? t.emoji + ' ' + t.label + ' · ' : '';
   }
 
   const workoutSid = w => (w.athleteSid ||

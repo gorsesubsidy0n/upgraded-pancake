@@ -164,6 +164,25 @@ test('a smaller qty than the cap still limits (cap never raises supply)', () => 
   assert.strictEqual(api.propCapacity('resistanceBands'), 2);
 });
 
+test('at-home class lifts every prop people limit, studio class restores them', () => {
+  const { api } = loadApp();
+  api.state.participants = 12;
+  api.state.atHome = true;
+  for (const id of ['sliders', 'resistanceBands', 'dumbbells']) {
+    if (!api.state.inventory[id] || !(api.state.inventory[id].qty > 0)) continue;
+    assert.strictEqual(api.propCapacity(id), Infinity, id);
+    assert.strictEqual(api.propStatus(id), 'ok', id);
+    assert.strictEqual(api.propUserCapped(id), false, id);
+    assert.ok(api.propUsable(id), id);
+  }
+  api.state.inventory.sliders = api.normalizeProp('sliders', { qty: 0, maxUsers: 3 });
+  assert.strictEqual(api.propStatus('sliders'), 'none', 'props you have none of still stay out');
+  api.state.inventory.sliders = api.normalizeProp('sliders', { qty: 8 });
+  api.state.atHome = false;
+  assert.strictEqual(api.propCapacity('sliders'), 3, 'studio cap back on');
+  assert.strictEqual(api.propStatus('sliders'), 'limited');
+});
+
 test('muscle themes: old keys still resolve, new ones have contracts', () => {
   const { api, ctx } = loadApp();
   for (const k of ['full', 'upper', 'lower', 'core', 'cardio', 'push', 'pull', 'glutes', 'chestback', 'shouldersarms', 'quads', 'hips']) {
@@ -239,4 +258,62 @@ test('phone link seekTo lands on the right interval', () => {
   assert.deepStrictEqual({ ...r.ihSeekTo(seq, 69) }, { idx: 2, left: 1 });
   assert.deepStrictEqual({ ...r.ihSeekTo(seq, 40) }, { idx: 2, left: 30 });
   assert.strictEqual(r.ihSeekTo(seq, 70), null);
+});
+
+// ── themes.js: optional fun class themes ─────────────────────
+function loadThemes(themeId) {
+  const ctx = { console, String, RegExp, Object, Date, state: { funTheme: themeId || '', workout: null } };
+  vm.createContext(ctx);
+  vm.runInContext(read('themes.js') + '\n;this.__api={IH_FUN_THEMES,IH_FUN_THEME_GROUPS,ihFunName,ihFunNameFor,ihFunNameHtml,ihFunThemeById,ihFunThemeTag,ihSuggestedFunThemes};', ctx, { filename: 'themes.js' });
+  return { api: ctx.__api, ctx };
+}
+
+test('fun themes are well formed with unique ids', () => {
+  const { api } = loadThemes();
+  const groups = new Set(api.IH_FUN_THEME_GROUPS.map(g => g.id));
+  const ids = new Set();
+  for (const t of api.IH_FUN_THEMES) {
+    assert.ok(t.id && t.label && t.emoji, 'theme missing id/label/emoji');
+    assert.ok(groups.has(t.category), t.id + ' has a bad category');
+    assert.ok(Array.isArray(t.months) && t.months.every(m => m >= 1 && m <= 12), t.id + ' months');
+    assert.ok(!ids.has(t.id), 'duplicate theme id ' + t.id);
+    ids.add(t.id);
+  }
+  for (const g of groups) assert.ok(api.IH_FUN_THEMES.some(t => t.category === g), 'empty group ' + g);
+});
+
+test('fun themes rename for display only and leave unthemed names alone', () => {
+  assert.strictEqual(loadThemes('').api.ihFunName('Goblet Squat'), 'Goblet Squat');
+  assert.strictEqual(loadThemes('nope').api.ihFunName('Goblet Squat'), 'Goblet Squat');
+  const sq = loadThemes('squatober').api;
+  assert.strictEqual(sq.ihFunName('Goblet Squat'), 'Goblet Squatober Squat');
+  assert.strictEqual(sq.ihFunName('Push-Up'), '🦵 Push-Up');
+  const hw = loadThemes('halloween').api;
+  assert.strictEqual(hw.ihFunName('Jumping Jacks'), 'Skeleton Jack');
+  assert.strictEqual(hw.ihFunName('Bodyweight squat'), 'Bodyweight Pumpkin Squat');
+  assert.strictEqual(loadThemes('movember').api.ihFunName('Plank'), 'Mo Plank');
+});
+
+test('fun theme html escapes and shows the real name', () => {
+  const hw = loadThemes('halloween').api;
+  const html = hw.ihFunNameHtml('<b>Squat</b>');
+  assert.ok(!html.includes('<b>'), html);
+  assert.match(html, /class="fun-real"/);
+  assert.strictEqual(loadThemes('').api.ihFunNameHtml('A & B'), 'A &amp; B');
+});
+
+test('fun theme tag and monthly suggestions', () => {
+  const { api } = loadThemes();
+  assert.strictEqual(api.ihFunThemeTag('halloween'), ' · 🎃 Halloween');
+  assert.strictEqual(api.ihFunThemeTag('nope'), '');
+  const oct = api.ihSuggestedFunThemes(new Date(2026, 9, 5)).map(t => t.id);
+  assert.ok(oct.includes('halloween') && oct.includes('squatober'), oct.join());
+});
+
+test('a theme saved on the workout wins over the default', () => {
+  const { api, ctx } = loadThemes('halloween');
+  ctx.state.workout = { funTheme: 'squatober' };
+  assert.strictEqual(api.ihFunName('Air Squat'), 'Air Squatober Squat');
+  ctx.state.workout = { funTheme: '' };
+  assert.strictEqual(api.ihFunName('Air Squat'), 'Air Squat');
 });

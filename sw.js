@@ -13,7 +13,7 @@
 //  fresh copy of everything and the bar appears on open pages. Without a
 //  bump, changed files are still noticed by the background check.
 // ============================================================
-const APP_VERSION = '2026.10.9';
+const APP_VERSION = '2026.11.11';
 const CACHE = 'inspire-habits-' + APP_VERSION;
 const STAGE = CACHE + '-next';
 const STAGE_DONE = '__ih_stage_complete__';
@@ -23,8 +23,8 @@ const SHELL = [
   './', 'index.html', 'style.css', 'manifest.json',
   'actions.js', 'auth.js', 'storage.js', 'bootcheck.js',
   'exercise-db.js', 'muscle-map.js', 'app.js', 'programming.js',
-  'editor.js', 'mixed_ability.js', 'profiles.js', 'qr.js', 'participant.js', 'remote.js',
-  'features.js', 'boot.js',
+  'editor.js', 'mixed_ability.js', 'profiles.js', 'qr.js', 'qr-builder.js', 'participant.js', 'remote.js',
+  'features.js', 'themes.js', 'simple.js', 'boot.js',
   'icon-192.png', 'icon-512.png', 'icon-maskable-512.png', 'apple-touch-icon.png',
 ];
 

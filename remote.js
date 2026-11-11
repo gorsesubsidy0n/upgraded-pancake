@@ -390,6 +390,9 @@
     if (typeof clearLiveSession === 'function') clearLiveSession();
     state.style = data.w.style || state.style;
     state.participants = data.w.participants || state.participants;
+    state.atHome = data.w.atHome === true;
+    state.funTheme = (typeof ihFunThemeById === 'function' && ihFunThemeById(data.w.funTheme)) ? data.w.funTheme : '';
+    data.w.funTheme = state.funTheme;
     resumeLiveSession({
       workout: data.w, muscle: data.muscle || undefined, viewMode: 'instructor',
       current: 0, seconds: 0, ma: data.ma || null,

@@ -30,10 +30,14 @@ function ihBar(id, html, ttlMs) {
   bar.setAttribute('role', 'status');
   bar.innerHTML = html;
   document.body.appendChild(bar);
+  ihWatchBar(bar);
   ihRestackBars();
   if (ttlMs) setTimeout(() => { if (bar.parentNode) { bar.remove(); ihRestackBars(); } }, ttlMs);
   return bar;
 }
+// Re-stack when a bar's height changes (text wraps after rotation, fonts load).
+const ihBarSizeWatch = (typeof ResizeObserver === 'function') ? new ResizeObserver(() => ihRestackBars()) : null;
+function ihWatchBar(bar) { if (ihBarSizeWatch && bar) ihBarSizeWatch.observe(bar); }
 function ihCloseBar(id) { const b = ihEl(id); if (b) b.remove(); ihRestackBars(); }
 function ihRestackBars() {
   if (typeof document === 'undefined' || !document.querySelectorAll) return;
@@ -50,6 +54,7 @@ if (typeof document !== 'undefined' && document.addEventListener) {
   document.addEventListener('click', e => {
     if (e.target && e.target.closest && e.target.closest('.resume-bar')) setTimeout(ihRestackBars, 0);
   });
+  if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('resize', ihRestackBars);
 }
 
 function ihWhenUnlocked(fn) {
@@ -85,11 +90,16 @@ function ihSpeak(text) {
   } catch (e) { /* speech is a nicety */ }
 }
 
+// Fun-theme display name for a step (real name when no theme or app.js absent).
+function ihStepName(step) {
+  return typeof fxStepName === 'function' ? fxStepName(step) : ((step && step.name) || '');
+}
+
 function ihSpeakStep(step, next) {
   if (!step || !ihVoiceEnabled()) return;
-  const nm = step.name || '';
+  const nm = ihStepName(step);
   if (step.phase === 'work') ihSpeak(nm ? 'Go. ' + nm : 'Go');
-  else if (step.phase === 'rest') ihSpeak(next && next.name ? 'Rest. Next, ' + next.name : 'Rest');
+  else if (step.phase === 'rest') ihSpeak(next && next.name ? 'Rest. Next, ' + ihStepName(next) : 'Rest');
   else if (step.phase === 'warmup' || step.phase === 'cooldown') ihSpeak(nm || step.label || '');
   else ihSpeak(step.label || 'Get ready');
 }
@@ -129,7 +139,7 @@ function ihOnStep(step, next, idx, quiet) {
   if (!step) return;
   const live = ihEl('ih-live');
   if (live && !quiet) {
-    const bits = [step.label || step.phase || '', step.name || ''].filter(Boolean);
+    const bits = [step.label || step.phase || '', ihStepName(step)].filter(Boolean);
     live.textContent = bits.join(': ');
   }
   if (!quiet) ihSpeakStep(step, next);
@@ -593,24 +603,27 @@ function printClassCard() {
     ? '<h2>' + title + '</h2><ol>' + items.map(it => '<li>' + fmt(it) + '</li>').join('') + '</ol>' : '';
   const cb = w.coreBurner;
   const focus = muscleFocus(w.muscle || state.muscle).label;
+  const fn = e => typeof fxNameHtml === 'function' ? fxNameHtml(e.name) : ihEsc(e.name);
+  const theme = typeof ihFunTheme === 'function' ? ihFunTheme() : null;
   const html = '<!doctype html><html><head><meta charset="utf-8"><title>Class card</title><style>' +
     'body{font-family:Arial,Helvetica,sans-serif;margin:0;padding:26px;color:#111}' +
     'h1{font-size:30px;margin:0 0 4px;color:#d63d00}.meta{font-size:15px;color:#444;margin-bottom:14px}' +
     'h2{font-size:17px;margin:16px 0 6px;border-bottom:2px solid #d63d00;padding-bottom:2px;text-transform:uppercase;letter-spacing:.04em}' +
     'ol{margin:0;padding-left:28px;column-count:2;column-gap:32px}li{font-size:18px;line-height:1.35;margin-bottom:5px;break-inside:avoid}' +
     '.main li{font-size:21px;font-weight:700}.sub{display:block;font-size:12px;font-weight:400;color:#555}' +
-    '.foot{margin-top:18px;font-size:11px;color:#888}' +
+    '.foot{margin-top:18px;font-size:11px;color:#888}.fun-real{font-size:.7em;font-weight:400;color:#666}' +
     '</style></head><body>' +
     '<h1>' + ihEsc((w.styleCfg && w.styleCfg.name) || 'Class') + '</h1>' +
-    '<div class="meta">' + ihEsc(focus) + ' · ' + ihEsc(w.duration) + ' min · ' + ihEsc(w.participants) + ' people · ' + new Date().toLocaleDateString() + '</div>' +
-    list('Warm-up', w.warmup, e => ihEsc(e.name) + ' <span class="sub">' + ihEsc(e.duration) + 's</span>') +
+    '<div class="meta">' + ihEsc(focus) + ' · ' + ihEsc(w.duration) + ' min · ' + ihEsc(w.participants) + ' people · ' + new Date().toLocaleDateString() +
+      (theme ? ' · ' + ihEsc(theme.emoji + ' ' + theme.label) : '') + '</div>' +
+    list('Warm-up', w.warmup, e => fn(e) + ' <span class="sub">' + ihEsc(e.duration) + 's</span>') +
     '<div class="main">' + list('Main workout', w.exercises, e =>
-      ihEsc(e.name) + ' — ' + ihEsc(e.reps) + (e.unit ? ' ' + ihEsc(e.unit) : '') +
+      fn(e) + ' — ' + ihEsc(e.reps) + (e.unit ? ' ' + ihEsc(e.unit) : '') +
       '<span class="sub">' + ihEsc(e.propLabel || '') +
       (e.easier ? ' · easier: ' + ihEsc(e.easier) : '') + (e.harder ? ' · harder: ' + ihEsc(e.harder) : '') + '</span>') + '</div>' +
     (cb && cb.exercises && cb.exercises.length
-      ? list('Core burner · ' + ihEsc(cb.work) + 's on / ' + ihEsc(cb.rest) + 's off', cb.exercises, e => ihEsc(e.name)) : '') +
-    list('Cool-down', w.cooldown, e => ihEsc(e.name) + ' <span class="sub">' + ihEsc(e.duration) + 's</span>') +
+      ? list('Core burner · ' + ihEsc(cb.work) + 's on / ' + ihEsc(cb.rest) + 's off',       cb.exercises, e => fn(e)) : '') +
+          list('Cool-down', w.cooldown, e => fn(e) + ' <span class="sub">' + ihEsc(e.duration) + 's</span>') +
     '<div class="foot">Inspire Habits</div></body></html>';
   const win = window.open('', '_blank');
   if (!win) { ihToast('Pop-ups are blocked — allow them to print', 'error'); return; }

@@ -98,3 +98,121 @@ test('panel button handler runs through actions.js', () => {
   assert.match(html, /<span id="qr-url" hidden>https:\/\/example\.github\.io\/inspire-habits\/#c=abc<\/span>/);
   assert.match(QR.panelHtml('a"<b>&', 'x', 'c'), /<span id="x" hidden>a&quot;&lt;b&gt;&amp;<\/span>/);
 });
+
+// ── QR Builder styling and payloads ──────────────────────────────────────
+const URL1 = 'https://example.github.io/inspire-habits/';
+const LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+test('every shape, eye and frame combination renders an SVG', () => {
+  for (const body of QR.BODY_SHAPES) for (const eyeFrame of QR.EYE_FRAMES)
+    for (const eyeCenter of QR.EYE_CENTERS) for (const frame of QR.FRAMES) {
+      const r = QR.render(URL1, { body, eyeFrame, eyeCenter, frame, caption: 'Join', bannerText: 'Scan' });
+      const what = [body, eyeFrame, eyeCenter, frame].join('/');
+      assert.ok(r, what);
+      assert.match(r.svg, /^<svg class="ih-qr-svg" [^>]*viewBox="0 0 [\d.]+ [\d.]+"/, what);
+      assert.match(r.svg, /<\/svg>$/, what);
+      assert.doesNotMatch(r.svg, /NaN|undefined/, what);
+    }
+  assert.strictEqual(QR.render(filler(2954), {}), null);
+});
+
+test('unknown options and colours fall back safely', () => {
+  const r = QR.render(URL1, { body: 'x"><script>', fg: 'red;"', bg: 'javascript:', logo: 'data:text/html,<b>' });
+  assert.doesNotMatch(r.svg, /<script|javascript:|text\/html|red;/);
+  assert.match(r.svg, /fill="#ffffff"/);
+  assert.strictEqual(r.readback, null);
+});
+
+test('text in banners and captions is escaped', () => {
+  const r = QR.render(URL1, { frame: 'banner', bannerText: '<b>&"', caption: '<i>"x"</i>' });
+  assert.doesNotMatch(r.svg, /<b>|<i>/);
+  assert.match(r.svg, /&lt;B&gt;&amp;&quot;/);
+});
+
+test('a logo forces the strongest error correction and is graded', () => {
+  const plain = QR.render(URL1, {});
+  assert.strictEqual(plain.ecl, 'M');
+  for (const size of Object.keys(QR.LOGO_SIZES)) {
+    const r = QR.render(URL1, { logo: LOGO, logoSize: size });
+    assert.strictEqual(r.ecl, 'H', size);
+    assert.ok(r.readback && r.readback.budget === 30, size);
+    assert.ok(['good', 'risky', 'likely to fail'].includes(r.readback.verdict), size);
+    assert.ok(r.svg.includes(LOGO), size);
+  }
+  const small = QR.render(URL1, { logo: LOGO, logoSize: 'small' }).readback.pct;
+  const large = QR.render(URL1, { logo: LOGO, logoSize: 'large' }).readback.pct;
+  assert.ok(small < large);
+});
+
+test('low-contrast colours are warned about', () => {
+  assert.deepStrictEqual(QR.colorWarnings({ fg: '#000000', bg: '#ffffff', eyeColor: '#000000' }), []);
+  assert.ok(QR.colorWarnings({ fg: '#dddddd', bg: '#ffffff', eyeColor: '#dddddd' }).length > 0);
+  assert.ok(QR.colorWarnings({ fg: '#ffffff', bg: '#000000', eyeColor: '#ffffff' }).length > 0, 'inverted');
+  assert.ok(QR.contrast('#000000', '#ffffff') > 20);
+});
+
+test('class share codes stay classic until a style is saved', () => {
+  assert.strictEqual(QR.shareSvg(URL1, 'L'), QR.svg(URL1, 'L'));
+  assert.strictEqual(QR.shareSvg(URL1, 'L', null), QR.svg(URL1, 'L'));
+});
+
+test('a saved share style is read from the page-wide IHStore', () => {
+  // storage.js declares IHStore with const, so it is a global binding, not window.IHStore.
+  const style = { body: 'dots', eyeFrame: 'square', eyeCenter: 'square', fg: '#7a1f3d', eyeColor: '#000000', bg: '#ffffff' };
+  const ctx = vm.createContext({ window: {}, IHStore: { getJSON: k => (k === QR.SHARE_KEY ? style : null) } });
+  vm.runInContext(fs.readFileSync(path.join(ROOT, 'qr.js'), 'utf8'), ctx);
+  assert.match(ctx.window.IHQR.shareSvg(URL1, 'L'), /fill="#7a1f3d"/);
+  assert.doesNotMatch(fs.readFileSync(path.join(ROOT, 'qr-builder.js'), 'utf8'), /window\.IHStore\.\w+\(/);
+});
+
+test('class share codes keep their shapes scannable', () => {
+  const style = { body: 'dots', eyeFrame: 'circle', eyeCenter: 'leaf', fg: '#7a1f3d', eyeColor: '#d63d00', bg: '#ffffff' };
+  const small = QR.shareSvg(URL1, 'L', style);
+  assert.match(small, /fill="#7a1f3d"/);
+  assert.doesNotMatch(small, /shape-rendering="crispEdges"/, 'dots kept at a small version');
+  const longText = URL1 + '#c=' + filler(600);
+  assert.ok(QR.encode(longText).version > QR.SAFE_BODY_MAX_VERSION);
+  assert.match(QR.shareSvg(longText, 'L', style), /shape-rendering="crispEdges"/, 'square modules when dense');
+  const pale = QR.shareSvg(URL1, 'L', Object.assign({}, style, { fg: '#eeeeee', eyeColor: '#eeeeee' }));
+  assert.match(pale, /fill="#000000"/);
+  assert.match(pale, /fill="#ffffff"/);
+  assert.doesNotMatch(pale, /#eeeeee/);
+});
+
+test('payloads build the standard formats', () => {
+  const P = QR.payload;
+  assert.strictEqual(P.url('contoso.com/a').text, 'https://contoso.com/a');
+  assert.strictEqual(P.url('http://x.io').text, 'http://x.io');
+  assert.throws(() => P.url(''), /Enter a web address/);
+  assert.throws(() => P.url('a b.com'), /space/);
+  assert.throws(() => P.url('notaurl'), /doesn't look like/);
+  assert.strictEqual(P.wifi({ ssid: 'My;Net', password: 'p:a,s"s\\word', auth: 'WPA' }).text,
+    'WIFI:T:WPA;S:My\\;Net;P:p\\:a\\,s\\"s\\\\word;;');
+  assert.strictEqual(P.wifi({ ssid: 'Gym', auth: 'WPA2', password: 'longenough', hidden: true }).text,
+    'WIFI:T:WPA;S:Gym;P:longenough;H:true;;');
+  const open = P.wifi({ ssid: 'Gym', auth: 'nopass', password: 'ignored' });
+  assert.strictEqual(open.text, 'WIFI:T:nopass;S:Gym;;');
+  assert.strictEqual(open.notes.length, 1);
+  assert.strictEqual(P.wifi({ ssid: 'Gym', auth: 'WPA', password: 'short' }).notes.length, 1);
+  assert.throws(() => P.wifi({ ssid: 'Gym', auth: 'WPA2-Enterprise', password: 'x' }), /enterprise/);
+  assert.throws(() => P.wifi({ ssid: 'Gym', auth: 'WPA' }), /password/);
+  assert.throws(() => P.wifi({ ssid: ' ' }), /network name/);
+  assert.strictEqual(P.email({ email: 'a@b.co', subject: 'Hi there', body: 'x&y' }).text,
+    'mailto:a@b.co?subject=Hi%20there&body=x%26y');
+  assert.throws(() => P.email({ email: 'nope' }), /valid email/);
+  assert.strictEqual(P.phone({ phone: '+1 555 0100' }).text, 'tel:+1 555 0100');
+  assert.throws(() => P.phone({ phone: '1\n2' }), /line breaks/);
+  assert.strictEqual(P.sms({ phone: '555', body: 'See you' }).text, 'SMSTO:555:See you');
+  assert.strictEqual(P.text({ text: 'Hello' }).text, 'Hello');
+  assert.throws(() => P.text({ text: '  ' }), /Enter some text/);
+});
+
+test('the builder is wired into the page, cache and access rules', () => {
+  const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  assert.match(html, /data-onclick="ihShowQRBuilder\(\)"/);
+  assert.ok(html.indexOf('src="qr.js"') < html.indexOf('src="qr-builder.js"'));
+  assert.match(fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8'), /'qr-builder\.js'/);
+  const src = fs.readFileSync(path.join(ROOT, 'qr-builder.js'), 'utf8');
+  assert.match(src, /ihIsInstructor\(\)/, 'instructors only');
+  assert.doesNotMatch(src, /\bon(click|change|input|load)="/, 'no inline handlers under the CSP');
+});
