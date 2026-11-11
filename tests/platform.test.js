@@ -93,7 +93,7 @@ function loadAuth(pre, opts) {
     console, Math, Date, JSON, parseInt, Uint8Array, Uint32Array, Array, String, Object, Number, RegExp, Error, Promise, isFinite,
     window: { crypto: crypto.webcrypto },
     localStorage: mapStorage(store),
-    location: { href: (opts && opts.href) || 'http://x/', hash: '', reload() {} },
+    location: { href: (opts && opts.href) || 'http://x/', hash: (opts && opts.hash) || '', reload() {} },
     document: { documentElement: stubEl(), body: stubEl(), addEventListener() {}, getElementById() { return null; }, createElement: () => stubEl(), querySelector: () => null },
     setTimeout, clearTimeout,
   };
@@ -136,13 +136,6 @@ test('auth: throttle is capped at 2 minutes and decays after an hour', () => {
   assert.strictEqual(api.ihLockRemainingMs(), 0, 'first misses are free');
   api.ihSignIn('wrong-x');
   assert.ok(api.ihLockRemainingMs() > 0 && api.ihLockRemainingMs() <= 15000);
-});
-
-test('auth: a class link opens athlete mode without an access code or token', () => {
-  const { api, store } = loadAuth(null, { href: 'https://x/#c=eyJjbGFzcyI6MX0' });
-  assert.strictEqual(api.ihRole(), 'athlete');
-  assert.match(store.ih_auth, /^s2\.athlete\./);
-  assert.strictEqual(loadAuth().api.ihRole(), null, 'the bare site stays locked');
 });
 
 test('auth: legacy saved sign-in still unlocks and is upgraded; junk does not', () => {
@@ -256,6 +249,26 @@ test('auth: "Reopen last class" only for a recent, well-formed class link', () =
   }
   assert.strictEqual(loadAuth({ ih_last_class_hash: 'garbage{' }).api.ihLastClassHash(), '');
   assert.doesNotMatch(loadAuth().api.ihNoClassScreen(), /ih-lock-reopen/);
+  assert.match(loadAuth(rec(ok, now)).api.ihLockScreen(), /Back to your class/);
+  assert.doesNotMatch(loadAuth().api.ihLockScreen(), /ih-lock-reopen/);
+});
+
+test('auth: a class link (QR scan) opens the live view with no sign-in', () => {
+  const at = hash => loadAuth(null, { href: 'http://x/' + hash, hash });
+  const guest = at('#c=AbC_12-3&n=Sam');
+  assert.strictEqual(guest.api.ihRole(), 'athlete', 'class link: guest athlete');
+  assert.strictEqual(guest.store.ih_auth, undefined, 'guest pass is not saved');
+  assert.strictEqual(guest.session.ih_auth, undefined, 'guest pass is not saved per tab');
+  assert.strictEqual(at('#c=AbC_12-3&k=stale-token-0000').api.ihRole(), 'athlete', 'stale k still opens');
+  assert.strictEqual(at('').api.ihRole(), null, 'bare site stays locked');
+  assert.strictEqual(at('#c=').api.ihRole(), null, 'empty class payload');
+  assert.strictEqual(at('#i=abcdef').api.ihRole(), null, 'instructor phone link still needs a code');
+  assert.strictEqual(at('#c=AbC123&i=xyz').api.ihRole(), null, 'mixed link is not a class link');
+  // A saved sign-in is used as is; the guest pass only fills an empty role.
+  const { api } = loadAuth();
+  const saved = loadAuth({ ih_auth: api.ihMakeSession('athlete') }, { hash: '#c=AbC_12-3' });
+  assert.strictEqual(saved.api.ihRole(), 'athlete');
+  assert.ok(saved.store.ih_auth, 'saved sign-in kept');
 });
 
 // ── storage.js ──────────────────────────────────────────────
