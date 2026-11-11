@@ -8,7 +8,11 @@
    masks scored by the standard's penalty rules. Drawn as inline SVG.
 
    IHQR.encode(text) → { version, ecl, size, modules } or null (too long)
-   IHQR.svg(text)    → '<svg …>' or '' (too long)
+   IHQR.svg(text)    → '<svg …>' or '' (too long) — classic black on white
+   IHQR.render(text, opts) → { svg, version, ecl, warnings, readback } —
+                       shaped modules/eyes, colours, logo, frame, caption
+                       (the QR Builder, qr-builder.js)
+   IHQR.payload.*    → Wi-Fi / email / phone / SMS / URL / text payloads
    ihShowQRBig(id)   → full-screen code for the text of element #id
    ══════════════════════════════════════════════════════════════════════ */
 (function () {
@@ -274,7 +278,7 @@
   function showBig(sourceId, caption) {
     const src = typeof document !== 'undefined' && document.getElementById(sourceId);
     const text = src ? src.textContent : '';
-    const code = text && svg(text, 'QR code to scan');
+    const code = text && shareSvg(text, 'QR code to scan');
     if (!code) return;
     let o = document.getElementById('ih-qr-big');
     if (!o) {
@@ -298,7 +302,7 @@
   // small and the big code can never disagree.
   function panelHtml(text, sourceId, caption) {
     const q = encode(text);
-    const code = q && svg(text, 'QR code: ' + caption);
+    const code = q && shareSvg(text, 'QR code: ' + caption);
     if (!code) {
       return '<div class="ih-qr-wrap"><div class="qr-link-hint">This link is too long for a scan ' +
         'code, so send the link instead.</div></div>';
@@ -312,7 +316,364 @@
       '</div></div>';
   }
 
-  const api = { encode, svg, panelHtml };
+  // ── Styled codes (QR Builder) ─────────────────────────────────────────
+  // Same encoder, drawn with shaped modules, shaped finder "eyes", colours,
+  // an optional centre logo, frame and caption. Every option list below is
+  // also what the builder offers, so an unknown value falls back to the
+  // first (plainest) entry rather than producing a broken code.
+  const BODY_SHAPES = ['square', 'rounded', 'dots', 'diamond', 'small-squares', 'fluid',
+    'vertical-bars', 'horizontal-bars'];
+  // Diamond eyes were dropped: scanners failed to find them in testing.
+  const EYE_FRAMES = ['square', 'rounded', 'extra-rounded', 'circle', 'leaf'];
+  const EYE_CENTERS = ['square', 'rounded', 'extra-rounded', 'circle', 'leaf'];
+  const FRAMES = ['none', 'box', 'rounded-box', 'banner'];
+  const LOGO_SIZES = { small: 0.15, medium: 0.22, large: 0.28 };
+  // How much of the code each error-correction level can lose and still read.
+  const EC_CAPACITY = { L: 7, M: 15, Q: 25, H: 30 };
+  // Above this version modules are small enough that shaped (non-square)
+  // modules start costing scans from across a room, so share codes go square.
+  const SAFE_BODY_MAX_VERSION = 10;
+  const SHARE_KEY = 'hiit_qr_style';
+  const HEX = /^#[0-9a-f]{6}$/i;
+  const LOGO_DATA = /^data:image\/(png|jpeg|webp|gif);base64,[a-z0-9+/=]+$/i;
+  const r2 = v => Math.round(v * 100) / 100;
+  const pick = (v, list) => (list.indexOf(v) >= 0 ? v : list[0]);
+  const hex = (v, dflt) => (HEX.test(v || '') ? v.toLowerCase() : dflt);
+
+  // Clockwise rounded rectangle; c = [top-left, top-right, bottom-right, bottom-left] radii.
+  function rr(x, y, w, h, c) {
+    const [tl, tr, br, bl] = c.map(v => Math.max(0, Math.min(v, w / 2, h / 2)));
+    const arc = (r, ex, ey) => (r ? 'A' + r2(r) + ' ' + r2(r) + ' 0 0 1 ' + r2(ex) + ' ' + r2(ey) : '');
+    return 'M' + r2(x + tl) + ' ' + r2(y) +
+      'H' + r2(x + w - tr) + arc(tr, x + w, y + tr) +
+      'V' + r2(y + h - br) + arc(br, x + w - br, y + h) +
+      'H' + r2(x + bl) + arc(bl, x, y + h - bl) +
+      'V' + r2(y + tl) + arc(tl, x + tl, y) + 'Z';
+  }
+  function circ(cx, cy, r) {
+    return 'M' + r2(cx - r) + ' ' + r2(cy) + 'a' + r2(r) + ' ' + r2(r) + ' 0 1 1 ' + r2(2 * r) +
+      ' 0a' + r2(r) + ' ' + r2(r) + ' 0 1 1 ' + r2(-2 * r) + ' 0Z';
+  }
+  function diamond(cx, cy, h) {
+    return 'M' + r2(cx) + ' ' + r2(cy - h) + 'L' + r2(cx + h) + ' ' + r2(cy) + 'L' + r2(cx) + ' ' +
+      r2(cy + h) + 'L' + r2(cx - h) + ' ' + r2(cy) + 'Z';
+  }
+  // One finder part (7×7 frame, 5×5 hole or 3×3 centre) in the chosen shape.
+  function eyeShape(kind, x, y, w, leaf) {
+    if (kind === 'circle') return circ(x + w / 2, y + w / 2, w / 2);
+    if (kind === 'leaf') return rr(x, y, w, w, leaf.map(on => (on ? 0.32 * w : 0)));
+    const r = kind === 'rounded' ? 0.25 * w : kind === 'extra-rounded' ? 0.42 * w : 0;
+    return rr(x, y, w, w, [r, r, r, r]);
+  }
+
+  // WCAG relative luminance and contrast ratio for #rrggbb colours.
+  function lum(h) {
+    const c = [1, 3, 5].map(i => parseInt(h.substr(i, 2), 16) / 255)
+      .map(v => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)));
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  }
+  function contrast(a, b) {
+    const x = lum(a), y = lum(b);
+    return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+  }
+  function colorWarnings(o) {
+    const bg = hex(o.bg, '#ffffff'), fg = hex(o.fg, '#000000'), eye = hex(o.eyeColor, fg);
+    const out = [];
+    [['code', fg], ['eye', eye]].forEach(([label, c]) => {
+      if (label === 'eye' && c === fg) return;
+      if (lum(c) > lum(bg)) {
+        out.push(label[0].toUpperCase() + label.slice(1) + ' color is lighter than the background ' +
+          '(inverted) - many scanners fail on inverted codes');
+      } else if (contrast(c, bg) < 4) {
+        out.push('Low contrast for the ' + label + ' (' + contrast(c, bg).toFixed(1) +
+          ':1) - aim for 4:1 or higher');
+      }
+    });
+    return out;
+  }
+
+  // Greedy word wrap using an average-character-width estimate.
+  function wrap(text, maxChars) {
+    const lines = [];
+    let line = '';
+    String(text).split(/\s+/).filter(Boolean).forEach(w => {
+      if (!line) line = w;
+      else if ((line + ' ' + w).length <= maxChars) line += ' ' + w;
+      else { lines.push(line); line = w; }
+    });
+    if (line) lines.push(line);
+    return lines;
+  }
+
+  function render(text, opts) {
+    const o = opts || {};
+    const warnings = [];
+    const logo = typeof o.logo === 'string' && LOGO_DATA.test(o.logo) ? o.logo : '';
+    // A logo hides modules, so it always gets the strongest error correction.
+    const q = encode(text, logo ? 3 : Math.max(0, Math.min(3, o.minEcl | 0)));
+    if (!q) return null;
+    const body = pick(o.body, BODY_SHAPES);
+    const eyeFrame = pick(o.eyeFrame, EYE_FRAMES);
+    const eyeCenter = pick(o.eyeCenter, EYE_CENTERS);
+    const frame = pick(o.frame, FRAMES);
+    const bg = hex(o.bg, '#ffffff'), fg = hex(o.fg, '#000000');
+    const eyeColor = hex(o.eyeColor, fg), frameColor = hex(o.frameColor, fg);
+    colorWarnings({ bg, fg, eyeColor }).forEach(w => warnings.push(w));
+
+    const n = q.size, B = 4, u = 10, W = (n + 2 * B) * u;
+    const inFinder = (x, y) => (x < 7 && y < 7) || (x >= n - 7 && y < 7) || (x < 7 && y >= n - 7);
+
+    let plate = null, readback = null;
+    if (logo) {
+      const ls = (LOGO_SIZES[o.logoSize] || LOGO_SIZES.medium) * n * u;
+      const ps = ls + 2 * u, p0 = (W - ps) / 2;
+      plate = { x: p0, s: ps, ls };
+    }
+    const covered = (x, y) => {
+      if (!plate) return false;
+      const cx = (B + x + 0.5) * u, cy = (B + y + 0.5) * u;
+      return cx > plate.x && cx < plate.x + plate.s && cy > plate.x && cy < plate.x + plate.s;
+    };
+    const dark = (x, y) => x >= 0 && y >= 0 && x < n && y < n && q.modules[y][x] &&
+      !inFinder(x, y) && !covered(x, y);
+
+    if (plate) {
+      let hidden = 0;
+      for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (!inFinder(x, y) && covered(x, y)) hidden++;
+      const pct = hidden * 100 / (n * n - 147), budget = EC_CAPACITY[q.ecl];
+      readback = {
+        pct: Math.round(pct * 10) / 10, budget,
+        verdict: pct <= 0.5 * budget ? 'good' : pct <= 0.8 * budget ? 'risky' : 'likely to fail'
+      };
+      if (readback.verdict !== 'good') {
+        warnings.push('The logo covers ' + readback.pct + '% of the code (' + budget +
+          '% is the most it can lose) - ' + (readback.verdict === 'risky'
+          ? 'try a smaller logo' : 'use a smaller logo or it may not scan'));
+      }
+    }
+
+    let d = '';
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        if (!dark(x, y)) continue;
+        const x0 = (B + x) * u, y0 = (B + y) * u, cx = x0 + u / 2, cy = y0 + u / 2;
+        if (body === 'square') {
+          let run = 1;
+          while (dark(x + run, y)) run++;
+          d += 'M' + x0 + ' ' + y0 + 'h' + run * u + 'v' + u + 'h-' + run * u + 'z';
+          x += run - 1;
+        } else if (body === 'rounded') {
+          const i = 0.04 * u;
+          d += rr(x0 + i, y0 + i, u - 2 * i, u - 2 * i, [0.3 * u, 0.3 * u, 0.3 * u, 0.3 * u]);
+        } else if (body === 'dots') {
+          d += circ(cx, cy, u / 2 - 0.06 * u);
+        } else if (body === 'diamond') {
+          d += diamond(cx, cy, 0.56 * u);
+        } else if (body === 'small-squares') {
+          const i = 0.12 * u;
+          d += rr(x0 + i, y0 + i, u - 2 * i, u - 2 * i, [0, 0, 0, 0]);
+        } else if (body === 'fluid') {
+          d += circ(cx, cy, u / 2);
+          if (dark(x + 1, y)) d += rr(cx, y0, u, u, [0, 0, 0, 0]);
+          if (dark(x, y + 1)) d += rr(x0, cy, u, u, [0, 0, 0, 0]);
+        } else {
+          const r = u / 2 - 0.1 * u, vert = body === 'vertical-bars';
+          d += circ(cx, cy, r);
+          if (vert && dark(x, y + 1)) d += rr(cx - r, cy, 2 * r, u, [0, 0, 0, 0]);
+          if (!vert && dark(x + 1, y)) d += rr(cx, cy - r, u, 2 * r, [0, 0, 0, 0]);
+        }
+      }
+    }
+
+    let eyesFrame = '', eyesCenter = '';
+    [[0, 0, [true, false, true, false]], [n - 7, 0, [false, true, false, true]],
+      [0, n - 7, [false, true, false, true]]].forEach(([ox, oy, leaf]) => {
+      const X = (B + ox) * u, Y = (B + oy) * u;
+      eyesFrame += eyeShape(eyeFrame, X, Y, 7 * u, leaf) + eyeShape(eyeFrame, X + u, Y + u, 5 * u, leaf);
+      eyesCenter += eyeShape(eyeCenter, X + 2 * u, Y + 2 * u, 3 * u, leaf);
+    });
+
+    // Frame and banner around the code (the quiet zone stays inside it).
+    let t = 0, pad = 0, bh = 0;
+    if (frame !== 'none') {
+      t = Math.max(0.6 * u, W / 45);
+      pad = 2 * t;
+      if (frame === 'banner') bh = 0.16 * W;
+    }
+    const OW = W + 2 * (pad + t), OH = frame === 'none' ? W : OW + bh;
+    const codeAt = t + pad;
+
+    let capLines = [], capFs = 0;
+    const caption = String(o.caption || '').trim();
+    if (caption) {
+      capFs = W / 18;
+      const fit = fs => wrap(caption, Math.max(4, Math.floor(OW * 0.92 / (0.55 * fs))));
+      capLines = fit(capFs);
+      while (capLines.length > 2 && capFs > W / 36) {
+        capFs = Math.max(W / 36, capFs * 0.9);
+        capLines = fit(capFs);
+      }
+      if (capLines.length > 1) warnings.push('The caption wraps onto ' + capLines.length + ' lines');
+    }
+    const lineH = 1.25 * capFs;
+    const TH = OH + (capLines.length ? 1.8 * capFs + lineH * (capLines.length - 1) : 0);
+    const font = 'font-family="Arial, Helvetica, sans-serif"';
+
+    let out = '<svg class="ih-qr-svg" xmlns="http://www.w3.org/2000/svg" ' +
+      'xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 ' + r2(OW) + ' ' + r2(TH) + '"' +
+      (o.px ? ' width="' + Math.round(o.px) + '" height="' + Math.round(o.px * TH / OW) + '"' : '') +
+      ' role="img" aria-label="' + esc(o.label || 'QR code') + '" data-version="' + q.version + '">' +
+      '<rect width="' + r2(OW) + '" height="' + r2(TH) + '" fill="' + bg + '"/>';
+    if (frame !== 'none') {
+      const r = frame === 'rounded-box' ? W / 12 : frame === 'banner' ? W / 24 : 0;
+      const innerBottom = frame === 'banner' ? W + 2 * pad + t : OH - t;
+      out += '<path fill="' + frameColor + '" d="' + rr(0, 0, OW, OH, [r, r, r, r]) + '"/>' +
+        '<path fill="' + bg + '" d="' + rr(t, t, OW - 2 * t, innerBottom - t,
+          [Math.max(0, r - t), Math.max(0, r - t), Math.max(0, r - t), Math.max(0, r - t)]) + '"/>';
+      if (frame === 'banner') {
+        const label = (String(o.bannerText || '').trim() || 'SCAN ME').toUpperCase();
+        let fs = 0.5 * bh, fitAttr = '';
+        const max = 0.85 * OW;
+        if (label.length * 0.62 * fs > max) {
+          fs = Math.max(0.3 * bh, max / (label.length * 0.62));
+          if (label.length * 0.62 * fs > max) {
+            fitAttr = ' textLength="' + r2(max) + '" lengthAdjust="spacingAndGlyphs"';
+            warnings.push('The banner text is long, so it has been squeezed to fit');
+          }
+        }
+        out += '<text x="' + r2(OW / 2) + '" y="' + r2(innerBottom + (OH - innerBottom) / 2) + '" ' + font +
+          ' font-weight="700" font-size="' + r2(fs) + '" fill="' + bg + '" text-anchor="middle" ' +
+          'dominant-baseline="central"' + fitAttr + '>' + esc(label) + '</text>';
+      }
+    }
+    out += '<g transform="translate(' + r2(codeAt) + ' ' + r2(codeAt) + ')">' +
+      '<path fill="' + fg + '"' + (body === 'square' ? ' shape-rendering="crispEdges"' : '') +
+        ' d="' + d + '"/>' +
+      '<path fill="' + eyeColor + '" fill-rule="evenodd" d="' + eyesFrame + '"/>' +
+      '<path fill="' + eyeColor + '" d="' + eyesCenter + '"/>';
+    if (plate) {
+      const off = plate.x + (plate.s - plate.ls) / 2;
+      out += '<path fill="' + bg + '" d="' + rr(plate.x, plate.x, plate.s, plate.s, [u, u, u, u]) + '"/>' +
+        '<image x="' + r2(off) + '" y="' + r2(off) + '" width="' + r2(plate.ls) + '" height="' +
+        r2(plate.ls) + '" preserveAspectRatio="xMidYMid meet" href="' + logo + '" xlink:href="' +
+        logo + '"/>';
+    }
+    out += '</g>';
+    capLines.forEach((line, i) => {
+      out += '<text x="' + r2(OW / 2) + '" y="' + r2(OH + 1.25 * capFs + i * lineH) + '" ' + font +
+        ' font-size="' + r2(capFs) + '" fill="' + fg + '" text-anchor="middle">' + esc(line) + '</text>';
+    });
+    out += '</svg>';
+    return { svg: out, version: q.version, ecl: q.ecl, warnings, readback };
+  }
+
+  function styledSvg(text, opts) {
+    const r = render(text, opts);
+    return r ? r.svg : '';
+  }
+
+  // The style the instructor saved for class share codes. Only shape and
+  // colour carry over - logos, frames and captions are for the builder's
+  // own downloads - and anything that could cost a scan is undone here.
+  function shareStyle() {
+    try {
+      // storage.js declares IHStore with const, so it is not on window.
+      const S = typeof IHStore !== 'undefined' ? IHStore
+        : (typeof window !== 'undefined' ? window.IHStore : null);
+      const s = S && S.getJSON(SHARE_KEY, null);
+      return s && typeof s === 'object' ? s : null;
+    } catch (e) { return null; }
+  }
+  function shareSvg(text, label, style) {
+    const s = style === undefined ? shareStyle() : style;
+    if (!s) return svg(text, label);
+    const q = encode(text);
+    if (!q) return '';
+    const o = { body: s.body, eyeFrame: s.eyeFrame, eyeCenter: s.eyeCenter,
+      fg: s.fg, eyeColor: s.eyeColor, bg: s.bg, label };
+    if (q.version > SAFE_BODY_MAX_VERSION) o.body = 'square';
+    if (colorWarnings(o).length) { o.fg = '#000000'; o.eyeColor = '#000000'; o.bg = '#ffffff'; }
+    return styledSvg(text, o) || svg(text, label);
+  }
+
+  // Payloads for the builder's code types. Each returns { text, notes } or
+  // throws an Error whose message can be shown as is.
+  const wifiEsc = s => String(s || '').replace(/([\\;,:"])/g, '\\$1');
+  const WIFI_AUTH = { WPA: 'WPA', WPA2: 'WPA', WPA3: 'WPA', 'WPA/WPA2': 'WPA', 'WPA2/WPA3': 'WPA',
+    'WPA-PSK': 'WPA', 'WPA2-PSK': 'WPA', 'WPA3-PSK': 'WPA', 'WPA-PERSONAL': 'WPA', 'WPA2-PERSONAL': 'WPA',
+    'WPA3-PERSONAL': 'WPA', SAE: 'WPA', WEP: 'WEP', NOPASS: 'nopass', NONE: 'nopass', OPEN: 'nopass' };
+  const ENTERPRISE = ['EAP', 'ENTERPRISE', '802.1X', '8021X', 'RADIUS', 'PEAP', 'TTLS', 'LEAP'];
+  const oneLine = (v, what) => {
+    const s = String(v || '').trim();
+    if (/[\r\n]/.test(s)) throw new Error('The ' + what + ' can\'t contain line breaks.');
+    return s;
+  };
+  const payload = {
+    url(raw) {
+      let s = String(raw || '').trim();
+      if (!s) throw new Error('Enter a web address.');
+      if (/\s/.test(s)) throw new Error('The web address contains a space, so the code would open a broken link.');
+      if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
+      let host = '';
+      try { host = new URL(s).hostname; } catch (e) { throw new Error('"' + raw + '" isn\'t a valid web address.'); }
+      if (host.indexOf('.') < 0 && host !== 'localhost') {
+        throw new Error('"' + raw + '" doesn\'t look like a web address (expected something like contoso.com).');
+      }
+      return { text: s, notes: [] };
+    },
+    wifi(f) {
+      const ssid = String(f.ssid || '');
+      if (!ssid.trim()) throw new Error('Enter the Wi-Fi network name.');
+      const raw = String(f.auth || 'WPA').trim(), key = raw.replace(/\s+/g, '').toUpperCase();
+      let auth = WIFI_AUTH[key];
+      if (!auth) {
+        if (ENTERPRISE.some(t => key.indexOf(t) >= 0)) {
+          throw new Error('"' + raw + '" is an enterprise (work/school login) Wi-Fi type. Wi-Fi codes only ' +
+            'support personal networks: WPA, WEP or open.');
+        }
+        throw new Error('"' + raw + '" isn\'t a Wi-Fi security type QR codes support. Use WPA, WEP or open.');
+      }
+      const pw = String(f.password || ''), notes = [], hid = f.hidden ? 'H:true;' : '';
+      if (auth === 'nopass') {
+        if (pw.trim()) notes.push('This is an open network, so the password was left out of the code.');
+        return { text: 'WIFI:T:nopass;S:' + wifiEsc(ssid) + ';' + hid + ';', notes };
+      }
+      if (!pw) throw new Error('Enter the Wi-Fi password (or choose an open network).');
+      if (auth === 'WPA' && !((pw.length >= 8 && pw.length <= 63) || /^[0-9a-f]{64}$/i.test(pw))) {
+        notes.push('WPA passwords are normally 8-63 characters - double-check it, or phones won\'t connect.');
+      }
+      if (auth === 'WEP' && !([5, 13].indexOf(pw.length) >= 0 || /^([0-9a-f]{10}|[0-9a-f]{26})$/i.test(pw))) {
+        notes.push('WEP passwords are normally 5 or 13 characters - double-check it, or phones won\'t connect.');
+      }
+      return { text: 'WIFI:T:' + auth + ';S:' + wifiEsc(ssid) + ';P:' + wifiEsc(pw) + ';' + hid + ';', notes };
+    },
+    email(f) {
+      const to = oneLine(f.email, 'email address');
+      if (!to || /\s/.test(to) || to.indexOf('@') < 0) throw new Error('Enter a valid email address.');
+      const qs = [];
+      if (f.subject) qs.push('subject=' + encodeURIComponent(f.subject));
+      if (f.body) qs.push('body=' + encodeURIComponent(f.body));
+      return { text: 'mailto:' + to + (qs.length ? '?' + qs.join('&') : ''), notes: [] };
+    },
+    phone(f) {
+      const p = oneLine(f.phone, 'phone number');
+      if (!p) throw new Error('Enter a phone number.');
+      return { text: 'tel:' + p, notes: [] };
+    },
+    sms(f) {
+      const p = oneLine(f.phone, 'phone number');
+      if (!p) throw new Error('Enter a phone number.');
+      return { text: 'SMSTO:' + p + ':' + String(f.body || ''), notes: [] };
+    },
+    text(f) {
+      const s = String(f.text || '');
+      if (!s.trim()) throw new Error('Enter some text.');
+      return { text: s, notes: [] };
+    }
+  };
+
+  const api = { encode, svg, panelHtml, render, styledSvg, shareSvg, payload, contrast, colorWarnings,
+    BODY_SHAPES, EYE_FRAMES, EYE_CENTERS, FRAMES, LOGO_SIZES, SAFE_BODY_MAX_VERSION, SHARE_KEY };
   if (typeof window !== 'undefined') {
     window.IHQR = api;
     window.ihShowQRBig = showBig;

@@ -14,8 +14,8 @@
      nameless bookmark. Paths are relative so this works unchanged from a
      folder, from localhost, and from a GitHub Pages subpath. -->
 <link href="manifest.json" rel="manifest"/>
-<meta content="#0d0d0f" name="theme-color"/>
-<meta content="dark" name="color-scheme"/>
+<meta content="#fde4ee" name="theme-color"/>
+<meta content="light" name="color-scheme"/>
 <link href="apple-touch-icon.png" rel="apple-touch-icon"/>
 <link href="icon-192.png" rel="icon" type="image/png"/>
 <meta content="yes" name="mobile-web-app-capable"/>
@@ -50,13 +50,23 @@
 <div class="profile-switcher" id="profile-switcher"></div>
 </div>
 <div class="hero-actions">
-<button class="hero-link studio-link" data-onclick="showStudioView()">🏢 Studio View</button>
 <button class="hero-link" data-onclick="showSchedule()">📅 Schedule</button>
 <button class="hero-link" data-onclick="showHistory()">📋 History</button>
 <button class="hero-link" data-onclick="openExerciseLibrary()">📚 Library</button>
-<button class="hero-link" data-onclick="showAccessCodes()">🔒 Access Codes</button>
+<details class="hero-menu">
+<summary class="hero-link studio-link">⚙️ Studio ▾</summary>
+<div class="hero-menu-list">
+<button type="button" data-onclick="showStudioView()">🏢 Studio View</button>
+<button type="button" data-onclick="showAccessCodes()">🔒 Access Codes</button>
+<button type="button" data-onclick="ihShowQRBuilder()">📱 QR Builder</button>
+</div>
+</details>
 </div>
 </div>
+<label class="ih-advanced-switch">
+<input type="checkbox" id="ih-advanced-chk" data-onchange="ihSetAdvanced(this.checked)"/>
+<span>🛠️ Advanced editing <span class="ih-advanced-hint">show every option</span></span>
+</label>
 <div class="setup-grid">
 <!-- Participants -->
 <div class="card">
@@ -71,10 +81,16 @@
 </div>
 <input class="slider" id="participant-slider" aria-label="Number of participants" max="16" min="1" data-oninput="syncParticipants(this.value)" type="range" value="8"/>
 <div class="slider-labels"><span>1</span><span>16</span></div>
+<label class="ih-advanced-switch at-home-switch"><input type="checkbox" id="at-home-chk" data-onchange="ihSetAtHome(this.checked)"/><span>🏠 At-home class <span class="ih-advanced-hint">Everyone has their own equipment — no limits on how many can use a prop</span></span></label>
+<div class="fun-theme-row">
+<label class="fun-theme-label" for="fun-theme-select">🎉 Fun theme <span class="ih-advanced-hint">(optional)</span></label>
+<select id="fun-theme-select" class="fun-theme-select" data-onchange="ihSetFunTheme(this.value)"></select>
+<div class="fun-theme-hint" id="fun-theme-hint"></div>
+</div>
 <div class="station-note" id="station-note" style="display:none"></div>
 </div>
 <!-- Difficulty -->
-<div class="card">
+<div class="card ih-more">
 <h2><span class="card-icon">⭐</span> Difficulty</h2>
 <div class="diff-grid">
 <button class="diff-btn" data-diff="b" data-onclick="selectDifficulty(this)">
@@ -113,12 +129,12 @@
 <button class="dur-btn active" data-dur="45" data-onclick="selectDuration(this)">45 min</button>
 <button class="dur-btn" data-dur="60" data-onclick="selectDuration(this)">60 min</button>
 </div>
-<div class="custom-dur-row">
+<div class="custom-dur-row ih-more">
 <label class="custom-dur-label" for="custom-duration-val">Custom:</label>
 <input class="custom-dur-input" id="custom-duration-val" aria-label="Custom duration in minutes" max="120" min="5" data-onchange="setCustomDuration(this.value)" type="number" value="45"/>
 <span class="custom-dur-unit">min</span>
 </div>
-<div class="warmup-section">
+<div class="warmup-section ih-more">
 <div class="warmup-toggles">
 <label class="toggle-row">
 <input checked="" id="include-warmup" data-onchange="setIncludeWarmup(this.checked)" type="checkbox"/>
@@ -140,7 +156,7 @@
 </div>
 </div>
 <!-- Props -->
-<div class="card card-wide">
+<div class="card card-wide ih-more">
 <h2><span class="card-icon">🏋️</span> Available Props
 <button class="inv-open-btn" data-onclick="openInventory()" title="Edit what your studio owns">⚙️ Equipment</button></h2>
 <div class="props-grid"></div>
@@ -159,7 +175,14 @@
 </div>
 </div>
 </div><!-- /setup-grid -->
-<button class="generate-btn" data-onclick="openStylePicker()">⚡ Choose Style &amp; Generate</button>
+<button type="button" class="ih-more-toggle simple-only" id="ih-more-toggle" aria-expanded="false" data-onclick="ihToggleMore()">
+<span class="ih-more-title">More options <span id="ih-more-caret">▾</span></span>
+<span class="ih-more-summary" id="ih-more-summary">Intermediate · 7-min warm-up · cool-down</span>
+</button>
+<div class="ih-generate-row">
+<button class="generate-btn" id="ih-quick-btn" data-onclick="ihQuickClass()">⚡ Quick class</button>
+<button class="generate-btn ih-style-btn" data-onclick="openStylePicker()">🎨 Choose a style</button>
+</div>
 </div>
 <!-- ══════════════════════════════════════════════
      SCREEN 2: STYLE PICKER
@@ -250,6 +273,7 @@
 <div class="spb-tags"><span class="spb-tag">Full Control</span><span class="spb-tag">Your Format</span></div>
 </button>
 </div><!-- /style-pick-grid -->
+<button type="button" id="ih-more-styles-btn" class="ih-more-styles simple-only" data-onclick="ihToggleMoreStyles()">More styles ▾</button>
 <div class="picker-footer">
 <div class="style-selected-preview" id="style-selected-preview" style="display:none">
 <span id="style-selected-text"></span>
@@ -268,6 +292,7 @@
 <span class="badge-muscle" id="plan-muscle-badge"></span>
 <span class="badge-people" id="plan-people-badge"></span>
 <span class="badge-diff" id="plan-diff-badge"></span>
+<select class="badge-theme" id="plan-theme-select" data-onchange="ihSetFunTheme(this.value)" aria-label="Fun theme" title="Fun theme (optional)"></select>
 <span class="badge-time" id="plan-time-badge" title="Planned class time vs the length you chose"></span>
 <button class="fit-time-btn" id="plan-fit-btn" type="button" data-onclick="fitPlanToTime()" style="display:none" aria-label="Fit the class to the chosen length">⏱ Fit to time</button>
 </div>
@@ -280,21 +305,27 @@
 <div class="editor-banner-icon">✏️</div>
 <div>
 <div class="editor-banner-title">Review &amp; Edit Your Plan</div>
-<div class="editor-banner-sub">✏️ Edit · ⇄ Swap · ✕ Remove · ➕ Add exercises before going live.</div>
+<div class="editor-banner-sub adv-only">✏️ Edit · ⇄ Swap · ✕ Remove · ➕ Add exercises before going live.</div>
+<div class="editor-banner-sub simple-only">Happy with it? Tap Go Live. ⇄ swaps a move, ✕ removes one. Turn on Advanced editing for more.</div>
 </div>
 </div>
 <div class="coverage-panel" id="muscle-coverage-panel"></div>
 <div class="style-desc-box" id="plan-style-desc"></div>
+<div class="fun-theme-note" id="plan-theme-note" style="display:none"></div>
 <div class="station-note" id="plan-station-note" style="display:none;margin-bottom:12px"></div>
 <div class="exercises-container" id="plan-exercises"></div>
 <div class="editor-actions">
 <button class="action-btn secondary" data-onclick="generateWorkout()">🔄 Regenerate</button>
 <button class="action-btn secondary" data-onclick="openSaveClassModal()">💾 Save Class</button>
+<button class="action-btn secondary simple-only" data-onclick="openSavePlanModal()">📅 Schedule plan</button>
+<button type="button" class="action-btn secondary simple-only" id="plan-more-btn" aria-expanded="false" aria-controls="plan-more" data-onclick="ihTogglePlanMenu()">⋯ More</button>
+<div class="plan-more" id="plan-more">
 <button class="action-btn secondary" data-onclick="exportPDF()">📄 PDF</button>
 <button class="action-btn secondary" id="qr-plan-btn" data-onclick="showClassQR()" style="display:none">🔗 Share Link</button>
 <button class="action-btn instructor-btn" data-onclick="openInstructorView()">🎓 Instructor View</button>
-<button class="action-btn go-live-btn" data-onclick="goLive()">📺 Go Live →</button>
 <label class="phone-handoff-opt"><input type="checkbox" id="phone-handoff-chk" checked data-onchange="setPhoneHandoff(this.checked)"> 📲 Send an instructor link to my phone when I Go Live (AirDrop)</label>
+</div>
+<button class="action-btn go-live-btn" data-onclick="goLive()">📺 Go Live →</button>
 </div>
 </div>
 <!-- ══════════════════════════════════════════════
@@ -681,9 +712,12 @@
 <script src="mixed_ability.js"></script>
 <script src="profiles.js"></script>
 <script src="qr.js"></script>
+<script src="qr-builder.js"></script>
 <script src="participant.js"></script>
 <script src="remote.js"></script>
 <script src="features.js"></script>
+<script src="themes.js"></script>
+<script src="simple.js"></script>
 <script src="boot.js"></script>
 </body>
 </html>

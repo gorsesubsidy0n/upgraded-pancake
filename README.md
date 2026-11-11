@@ -173,8 +173,10 @@ middle of a live class — stop the class first.
 ## Access codes
 
 The app asks for a studio name and password before it shows anything. The
-sign-in screen shows the Inspire Habits barbell-and-heart logo on a coral
-background and says "Please enter your studio name and password."
+sign-in screen shows the barbell-and-heart logo (no name under it) on a coral
+background and says "Please enter your studio name and password." Once you
+are in, the app uses a light theme: light pink page, white cards, dark text.
+The colours live in the `:root` block at the top of `style.css`.
 
 - **Studio name** is **IFW**, filled in for you (case doesn't matter). To use
   a different name, change `IH_STUDIO_NAME` near the top of the sign-in code in
@@ -368,6 +370,31 @@ If the copy button can't reach the clipboard — some browsers only allow it
 on https addresses — the link is selected for you and you can press
 Ctrl-C (Cmd-C on a Mac) instead.
 
+### QR Builder
+
+**📱 QR Builder** (top of the instructor screen) makes scan codes for
+anything else — posters, the front desk, a class flyer. Like the share
+codes, it is drawn on the device and nothing is sent anywhere.
+
+- **What it opens** — a web link, studio Wi-Fi (scan to join), plain text,
+  an email, a phone call or a text message.
+- **Shapes and colours** — eight dot patterns (square, rounded, dots,
+  diamond, small squares, fluid, bars); five styles each for the corner
+  frames and centres; your own code, corner and background colours. The app
+  warns you if the colours are too close together to scan. (Diamond corners
+  were left out because phones failed to read them.)
+- **Frame and logo** — an optional box, rounded box or "SCAN ME" banner, a
+  caption under the code, and a centre logo. A logo switches the code to its
+  highest error correction, and the app warns if the logo is too big.
+- **Download PNG / SVG** — PNG for printing or texting, SVG for designers
+  and very large prints.
+- **Class share codes → Use this style** — the codes athletes scan to join a
+  class use your pattern and colours. Logos, frames and captions are never
+  added to those, because class codes are already dense. **Reset to
+  classic** goes back to black and white.
+
+Always test-scan a printed code with a phone before putting it up.
+
 ---
 
 ## What athletes do
@@ -540,6 +567,31 @@ store anything. Usually one of:
 The app keeps working normally for the rest of the session — nothing is lost
 while the tab is open, and you can still teach the class. But close the tab
 and it's gone, so use **⬇︎ Back up to file** before you do.
+
+---
+
+## Designing a class — simple by default
+
+The setup screen shows only what most classes need: class size, length,
+style and muscle focus. Everything else is still there, one tap away.
+
+- **⚡ Quick class** — one tap builds a class from your last settings (or
+  sensible defaults) and opens it ready to teach or tweak.
+- **More options** — level, warm-up, cool-down, props and mixed-ability
+  setup are folded under this. The closed line shows a summary such as
+  "Intermediate · 7-min warm-up · cool-down · 11 props" so you can see the
+  choices without opening it.
+- **More styles** — the style picker shows the common styles first; tap
+  **More styles** to see the rest.
+- **⋯ on the plan** — PDF, Share Link and Instructor View live in one menu
+  instead of a row of buttons.
+- **⚙️ Studio menu** — Studio View, Access Codes and QR Builder sit in one
+  Studio menu in the header, next to Schedule, History and Library.
+- **Advanced editing** — turn this switch on to show every option, every
+  style and the detailed exercise editing all the time.
+- **Remembers you** — each instructor's last class settings and their
+  Advanced editing choice are saved for next time (per instructor profile,
+  or for the device if profiles aren't used).
 
 ---
 
@@ -780,7 +832,9 @@ ESLint setup. None are needed for the app to work.
 | `participant.js` | The class share link and the athlete phone pages |
 | `remote.js` | The instructor phone link: share sheet / AirDrop, and opening it on the phone |
 | `qr.js` | Draws the scan codes in the share panels (offline, no outside service) |
+| `qr-builder.js` | The QR Builder: Wi-Fi, link, email and more, with styles and PNG/SVG download |
 | `profiles.js` | Instructor profiles and the "Who's teaching?" picker |
+| `simple.js` | Simple setup: Quick class, More options, menus, Advanced editing and remembered settings |
 | `auth.js` | The two access codes |
 | `storage.js` | The one safe door to browser storage (see the Safari notes above) |
 | `manifest.json` | Lets the app install properly via Add to Dock / Add to Home Screen |

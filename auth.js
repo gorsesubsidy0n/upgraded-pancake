@@ -699,7 +699,6 @@ function ihLockScreen() {
   }
   return '<div class="ih-lock-card ih-brandcard">' +
     IH_LOGO_SVG +
-    '<div class="ih-brand-word">Inspire Habits</div>' +
     '<p class="ih-lock-sub">Please enter your studio name and password.</p>' +
     '<form id="ih-lock-form" autocomplete="off">' +
       '<input type="text" id="ih-lock-studio" placeholder="Studio name" value="' + IH_STUDIO_NAME + '" ' +

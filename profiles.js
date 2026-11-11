@@ -221,6 +221,7 @@ function switchProfile(id) {
   if (typeof Roster !== 'undefined' && Roster.load) Roster.load();
   renderProfileSwitcher();
   updateProfileBadge();
+  if (typeof ihApplyInstructorPrefs === 'function') ihApplyInstructorPrefs();
   const hs = document.getElementById('history-screen');
   if (hs && hs.classList.contains('active') && typeof showHistory === 'function') showHistory();
   showToast('Switched to ' + PROFILES[id].name + ' ' + PROFILES[id].icon);

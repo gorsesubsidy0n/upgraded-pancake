@@ -519,7 +519,7 @@ function makeTieredExCard(ex, i) {
       <div class="plan-drag-handle">⠿</div>
       <div class="exercise-num">${i + 1}</div>
       <div class="exercise-info">
-        <div class="exercise-name">${escapeHtml(ex.name)} ${partnerBadge}${customBadge}</div>
+        <div class="exercise-name">${typeof fxNameHtml === 'function' ? fxNameHtml(ex.name) : escapeHtml(ex.name)} ${partnerBadge}${customBadge}</div>
         <div class="exercise-details">
           <span class="exercise-prop prop-${propCss}">${escapeHtml(ex.propLabel || '')}</span>
           <span class="exercise-muscle-tag">${escapeHtml(ex.muscle)}</span>
@@ -562,7 +562,8 @@ function renderLiveClassView(stepIdx) {
   // Update next label
   const next = seq[stepIdx + 1];
   const pNext = document.getElementById('p-next');
-  if (pNext) pNext.textContent = next?.name ? `Next: ${next.name}` : (next?.label ? `Next: ${next.label}` : '');
+  const _stepNm = s => typeof fxStepName === 'function' ? fxStepName(s) : ((s && s.name) || '');
+  if (pNext) pNext.textContent = next?.name ? `Next: ${_stepNm(next)}` : (next?.label ? `Next: ${next.label}` : '');
 
   // Update prop tag
   const pProp = document.getElementById('p-prop');
@@ -576,7 +577,7 @@ function renderLiveClassView(stepIdx) {
     // Non-MA mode or rest/warmup: show single big display
     zonesContainer.style.display = 'none';
     const pEx = document.getElementById('p-exercise');
-    if (pEx) pEx.textContent = step.name || '';
+    if (pEx) { if (typeof fxStepNameHtml === 'function') pEx.innerHTML = fxStepNameHtml(step); else pEx.textContent = step.name || ''; }
     const wrap = document.getElementById('p-exercise-wrap');
     if (wrap) wrap.style.display = 'flex';
     return;
@@ -608,8 +609,8 @@ function liveZoneHtml(ex, tier, opts = {}) {
           <span class="live-zone-label">${DIFF_FULL[tier]}</span>
           ${g?.count ? `<span class="live-zone-count">${g.count} people</span>` : ''}
         </div>
-        <div class="live-zone-exercise">${_maEsc(mod.move)}</div>
-        ${mod.changed ? `<div class="live-zone-base">Class move: ${_maEsc(ex.name)}</div>` : ''}
+        <div class="live-zone-exercise">${typeof fxNameHtml === 'function' ? fxNameHtml(mod.move) : _maEsc(mod.move)}</div>
+        ${mod.changed ? `<div class="live-zone-base">Class move: ${typeof fxNameHtml === 'function' ? fxNameHtml(ex.name) : _maEsc(ex.name)}</div>` : ''}
         <div class="live-zone-reps">${_maEsc(reps)}</div>
         <div class="live-zone-unit">${_maEsc(unit)}</div>
         ${tip ? `<div class="live-zone-mod">${_maEsc(tip)}</div>` : ''}
@@ -735,7 +736,7 @@ function buildTieredPDFSection(exercises) {
       </tr>`;
 
   exercises.forEach((ex, i) => {
-    html += `<tr><td>${i+1}</td><td>${_maEsc(ex.name)}</td><td>${_maEsc(ex.propLabel || '')}</td>`;
+    html += `<tr><td>${i+1}</td><td>${typeof fxNameHtml === 'function' ? fxNameHtml(ex.name) : _maEsc(ex.name)}</td><td>${_maEsc(ex.propLabel || '')}</td>`;
     activeGroups.forEach(g => {
       const { reps, unit, note } = getTierDisplay(ex, g.id);
       const mod = getModForTier(ex, g.id);
@@ -758,11 +759,11 @@ function _maSetPlanBadges() {
     if (w.styleCfg) { set('plan-style-badge', w.styleCfg.icon + ' ' + w.styleCfg.name); set('plan-style-desc', w.styleCfg.desc || ''); }
     if (typeof muscleFocus === 'function') set('plan-muscle-badge', '💪 ' + muscleFocus(state.muscle).label);
     const groups = MA.groups.filter(g => g.count > 0).map(g => `${g.icon}${g.count}`).join(' ');
-    set('plan-people-badge', '👥 ' + w.participants + (groups ? ' · ' + groups : ''));
+    set('plan-people-badge', '👥 ' + w.participants + (w.atHome ? ' · 🏠 At home' : '') + (groups ? ' · ' + groups : ''));
     set('plan-diff-badge', '⭐ Mixed ability');
     const stNote = document.getElementById('plan-station-note');
     if (stNote) {
-      if (w.participants >= 8 && w.stationCount) { stNote.textContent = '📍 Suggested stations: ' + w.stationCount + ' (pairs share props)'; stNote.style.display = 'block'; }
+      if (w.participants >= 8 && w.stationCount && !w.atHome) { stNote.textContent = '📍 Suggested stations: ' + w.stationCount + ' (pairs share props)'; stNote.style.display = 'block'; }
       else stNote.style.display = 'none';
     }
   } catch (e) { /* header badges are cosmetic */ }

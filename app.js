@@ -8,6 +8,10 @@ const state = {
   difficulty: 'intermediate',
   props: ['dumbbells','bench','bodyweight'],
   includeWarmup: true, includeCooldown: true, warmupDuration: 7, ygigWorkSec: 45,
+  // At-home class: everyone uses their own gear, so studio counts and
+  // "max people at once" caps don't apply.
+  atHome: false,
+  funTheme: '',
   workout: null,
   timer: { interval:null, seconds:0, current:0, isRunning:false, sequence:[], totalSteps:0 },
   savedWorkouts:   [],
@@ -742,7 +746,6 @@ const PROP_DEFAULTS = {
   bench:           { label:'Bench',               icon:'🪑',  css:'purple', qty:4,  share:'station'   },
   yogaBall:        { label:'Stability Ball',      icon:'🔵',  css:'green',  qty:1,  share:'station'   },
   elevationBlocks: { label:'Elevation Blocks',    icon:'📦',  css:'orange', qty:8,  share:'station'   },
-  balls:           { label:'Med Ball',            icon:'⚽',  css:'pink',   qty:0,  share:'station'   },
   slamBalls:       { label:'Slam Ball',           icon:'💣',  css:'red2',   qty:2,  share:'station'   },
   ankleWeights:    { label:'Ankle Weights',       icon:'🦶',  css:'teal',   qty:8,  share:'each'      },
   sliders:         { label:'Sliders',             icon:'🛷',  css:'slate',  qty:8,  share:'each',     maxUsers:3 },
@@ -750,6 +753,8 @@ const PROP_DEFAULTS = {
   bodyweight:      { label:'Bodyweight',          icon:'🤸',  css:'slate',  qty:0,  share:'unlimited' },
 };
 const PROP_ORDER = Object.keys(PROP_DEFAULTS);
+// Built-ins that were taken out of the app; a saved copy must not reappear as a custom prop.
+const RETIRED_PROPS = ['balls'];
 const SHARE_MODES = {
   each:      { label:'One per person', hint:'Dropped when there are not enough for everyone.' },
   station:   { label:'Shared station', hint:'People rotate through it. A shortage limits how many slots use it.' },
@@ -786,7 +791,7 @@ function loadInventory() {
     out[id] = normalizeProp(id, saved[id], PROP_DEFAULTS[id]);
   });
   Object.keys(saved).forEach(id => {
-    if (out[id] || PROP_DEFAULTS[id] || saved[id]._removed) return;
+    if (out[id] || PROP_DEFAULTS[id] || RETIRED_PROPS.includes(id) || !saved[id] || saved[id]._removed) return;
     out[id] = normalizeProp(id, saved[id], null);
   });
   return out;
@@ -815,6 +820,7 @@ const USER_CAP_SLOTS = 2;
 
 // True when the class is bigger than the prop's "max people at once" cap.
 function propUserCapped(id, people) {
+  if (state.atHome) return false;
   const n = people == null ? state.participants : people;
   const mu = propMaxUsers(id);
   return mu > 0 && n > mu;
@@ -830,6 +836,7 @@ function propCapacity(id, people) {
   const n = people == null ? state.participants : people;
   const qty = propQty(id);
   if (qty <= 0) return 0;
+  if (state.atHome) return Infinity;
   let cap = qty >= n ? Infinity : qty;
   if (propUserCapped(id, n)) cap = Math.min(cap, propMaxUsers(id));
   return cap;
@@ -842,6 +849,7 @@ function propStatus(id, people) {
   if (propIsUnlimited(id)) return 'ok';
   const qty = propQty(id);
   if (qty <= 0) return 'none';
+  if (state.atHome) return 'ok';
   // With a max-at-once cap, only that many people ever need the gear.
   const need = propUserCapped(id, n) ? propMaxUsers(id) : n;
   if (qty >= need) return need < n ? 'limited' : 'ok';
@@ -1128,9 +1136,22 @@ function syncParticipants(val) {
   if (slider && String(slider.value) !== String(state.participants)) slider.value = state.participants;
   renderPropsGrid();
 }
+// At-home toggle: lifts every prop count and "max at once" limit.
+function ihSetAtHome(on) {
+  state.atHome = !!on;
+  const chk = document.getElementById('at-home-chk');
+  if (chk && chk.checked !== state.atHome) chk.checked = state.atHome;
+  renderPropsGrid();
+  showToast(state.atHome ? '🏠 At-home class — prop limits are off' : '🏢 Studio class — prop limits are back on');
+}
 function updateStationNote() {
   const note = document.getElementById('station-note');
   if (!note) return;
+  if (state.atHome) {
+    note.textContent = '🏠 At-home class — everyone uses their own equipment, so there are no prop limits';
+    note.style.display = 'block';
+    return;
+  }
   const n = state.participants;
   const short = [], limited = [];
   (state.props||[]).forEach(id => {
@@ -1232,6 +1253,7 @@ function renderPropsGrid() {
     const status = propStatus(id);
     const on = prev ? prev.has(id) : true;
     const note = propIsUnlimited(id) ? ''
+      : state.atHome ? '<span class="prop-count-note ok">own gear</span>'
       : status === 'short' ? '<span class="prop-count-note short">×' + p.qty + ' · too few</span>'
       : status === 'limited' ? '<span class="prop-count-note">×' + p.qty + ' · ' +
           (propUserCapped(id) ? 'max ' + propMaxUsers(id) + ' at once' : 'shared') + '</span>'
@@ -1612,7 +1634,7 @@ function generateWorkout(opts) {
     if (Array.isArray(ranked) && ranked !== candidates && ranked.length) { candidates.length = 0; candidates.push(...ranked); }
   }
 
-  const stationCount = state.participants>=8?Math.ceil(exCount/2):exCount;
+  const stationCount = (state.participants>=8&&!state.atHome)?Math.ceil(exCount/2):exCount;
   // How many plan slots each prop can support at once, straight from the
   // studio inventory — a prop nobody has to queue for is left uncapped.
   const PROP_LIMITS_MAX = {};
@@ -1692,6 +1714,8 @@ function generateWorkout(opts) {
     diff, mainDur, stationCount,
     warmupDuration:warmupDur,
     participants:state.participants,
+    atHome:!!state.atHome,
+    funTheme:state.funTheme||'',
     ygigWorkSec:state.ygigWorkSec,
     muscle:state.muscle,
     duration:classLen,
@@ -1730,6 +1754,7 @@ function generateWorkout(opts) {
     else if ((state.participants||0) % 2) showToast('🤝 '+state.participants+' people: make one group a trio — one works, two hold the active rest, then rotate.');
   }
 
+  if (typeof ihRememberClass==='function') ihRememberClass(state);
   renderPlanEditor();
   showScreen('plan-editor-screen');
 }
@@ -1741,6 +1766,7 @@ function renderPlanEditor() {
   if (typeof syncClassQRButton==='function') syncClassQRButton();
   syncPlanTiming(state.workout);
   updatePlanTimeBadge();
+  if (typeof ihSyncFunThemeUi==='function') ihSyncFunThemeUi();
   if (typeof MA!=='undefined'&&MA.enabled) {
     renderTieredPlanEditor();
     // The tiered view has no style banners of its own; put them in front of
@@ -1757,11 +1783,11 @@ function renderPlanEditor() {
   const {style,styleCfg,exercises,warmup,cooldown,diff,stationCount}=state.workout;
   document.getElementById('plan-style-badge').textContent  = styleCfg.icon+' '+styleCfg.name;
   document.getElementById('plan-muscle-badge').textContent = '💪 '+muscleFocus(state.muscle).label;
-  document.getElementById('plan-people-badge').textContent = '👥 '+state.workout.participants;
+  document.getElementById('plan-people-badge').textContent = '👥 '+state.workout.participants+(state.workout.atHome?' · 🏠 At home':'');
   document.getElementById('plan-diff-badge').textContent   = '⭐ '+(DIFF_LABEL[diff]||diff);
   document.getElementById('plan-style-desc').textContent   = (STYLES[style]&&STYLES[style].desc)||styleCfg.desc;
   const stNote=document.getElementById('plan-station-note');
-  if (state.workout.participants>=8){stNote.textContent='📍 Suggested stations: '+stationCount+' (pairs share props)';stNote.style.display='block';}
+  if (state.workout.participants>=8&&!state.workout.atHome){stNote.textContent='📍 Suggested stations: '+stationCount+' (pairs share props)';stNote.style.display='block';}
   else stNote.style.display='none';
 
   const container=document.getElementById('plan-exercises'); container.innerHTML='';
@@ -1937,7 +1963,7 @@ function renderCoreBurnerSection(container){
     card.innerHTML=
       '<div class="exercise-num cb-num">🎯</div>'+
       '<div class="exercise-info">'+
-        '<div class="exercise-name">'+escapeHtml(ex.name)+'<span class="cb-pat-badge">'+escapeHtml(pat)+'</span></div>'+
+        '<div class="exercise-name">'+fxNameHtml(ex.name)+'<span class="cb-pat-badge">'+escapeHtml(pat)+'</span></div>'+
         '<div class="exercise-details">'+
           '<span class="exercise-prop prop-'+(PROP_CSS[ex.prop]||'slate')+'">'+escapeHtml(ex.propLabel||'')+'</span>'+
           '<span class="exercise-muscle-tag">'+escapeHtml(ex.muscle||'')+'</span>'+
@@ -2091,7 +2117,7 @@ function makePlanExCard(ex,i) {
     '<div class="plan-drag-handle">⠿</div>'+
     '<div class="exercise-num">'+(i+1)+'</div>'+
     '<div class="exercise-info">'+
-      '<div class="exercise-name">'+escapeHtml(ex.name)+(ex.isPartner?'<span class="partner-badge">👥 Partner</span>':'')+(ex._custom?'<span class="custom-badge">⭐</span>':'')+'</div>'+
+      '<div class="exercise-name">'+fxNameHtml(ex.name)+(ex.isPartner?'<span class="partner-badge">👥 Partner</span>':'')+(ex._custom?'<span class="custom-badge">⭐</span>':'')+'</div>'+
       '<div class="exercise-details">'+
         '<span class="exercise-prop prop-'+propCss+'">'+escapeHtml(ex.propLabel)+'</span>'+
         '<span class="exercise-muscle-tag">'+escapeHtml(ex.muscle)+'</span>'+
@@ -2122,7 +2148,7 @@ function makePlanWarmCoolCard(ex,i,type) {
   card.innerHTML=
     '<div class="exercise-num wc-num">'+(i+1)+'</div>'+
     '<div class="exercise-info">'+
-      '<div class="exercise-name">'+escapeHtml(ex.name)+(ex._custom?'<span class="custom-badge">⭐</span>':'')+'</div>'+
+      '<div class="exercise-name">'+fxNameHtml(ex.name)+(ex._custom?'<span class="custom-badge">⭐</span>':'')+'</div>'+
       '<div class="exercise-details"><span class="exercise-muscle-tag">'+escapeHtml(ex.note||'')+'</span></div>'+
     '</div>'+
     '<div class="exercise-right">'+
@@ -2302,7 +2328,9 @@ function saveWorkout(name){
     includeWarmup:state.includeWarmup,
     includeCooldown:state.includeCooldown,
     warmupDuration:state.warmupDuration,
-    ygigWorkSec:state.ygigWorkSec
+    ygigWorkSec:state.ygigWorkSec,
+    atHome:!!state.atHome,
+    funTheme:(state.workout&&state.workout.funTheme)||''
   };
   const merged=mergeById([saved],state.savedWorkouts,readJSON(personalKey(PERSONAL_SAVED),[]));
   if(merged.length>20){
@@ -2323,20 +2351,20 @@ function exportPDF(){
   if(!state.workout)return;
   if(typeof MA!=='undefined'&&MA.enabled){exportTieredPDF();return;}
   const {styleCfg,exercises,warmup,cooldown,diff}=state.workout;
-  let html='<html><head><style>body{font-family:Arial,sans-serif;padding:30px;color:#111}h1{color:#ff4d00}table{width:100%;border-collapse:collapse;margin-bottom:14px}th{background:#f0f0f0;text-align:left;padding:7px;font-size:12px}td{padding:7px;border-bottom:1px solid #eee;font-size:12px}.section{margin:18px 0 6px;font-size:15px;font-weight:bold;border-bottom:2px solid #ff4d00;padding-bottom:3px}.footer{margin-top:28px;font-size:10px;color:#999;text-align:center}</style></head><body><h1>Inspire Habits Class</h1><p style="color:#666;font-size:13px">Style: <b>'+escapeHtml(styleCfg.name)+'</b> | Focus: <b>'+escapeHtml(muscleFocus(state.muscle).label)+'</b> | Difficulty: <b>'+escapeHtml(DIFF_LABEL[diff]||diff)+'</b> | Duration: <b>'+escapeHtml(state.workout.duration)+' min</b> (planned '+fmtMinSec(classSeconds(state.workout))+') | Participants: <b>'+escapeHtml(state.workout.participants)+'</b> | Date: <b>'+new Date().toLocaleDateString()+'</b></p>';
-  if(warmup.length>0){html+='<div class="section">🔥 Warm-Up</div><table><tr><th>#</th><th>Exercise</th><th>Duration</th><th>Notes</th></tr>';warmup.forEach((ex,i)=>{html+='<tr><td>'+(i+1)+'</td><td>'+escapeHtml(ex.name)+'</td><td>'+secOf(ex.duration,30)+'s</td><td>'+escapeHtml(ex.note||'')+'</td></tr>';});html+='</table>';}
+  let html='<html><head><style>body{font-family:Arial,sans-serif;padding:30px;color:#111}h1{color:#ff4d00}table{width:100%;border-collapse:collapse;margin-bottom:14px}th{background:#f0f0f0;text-align:left;padding:7px;font-size:12px}td{padding:7px;border-bottom:1px solid #eee;font-size:12px}.section{margin:18px 0 6px;font-size:15px;font-weight:bold;border-bottom:2px solid #ff4d00;padding-bottom:3px}.footer{margin-top:28px;font-size:10px;color:#999;text-align:center}</style></head><body><h1>Inspire Habits Class</h1><p style="color:#666;font-size:13px">Style: <b>'+escapeHtml(styleCfg.name)+'</b> | Focus: <b>'+escapeHtml(muscleFocus(state.muscle).label)+'</b> | Difficulty: <b>'+escapeHtml(DIFF_LABEL[diff]||diff)+'</b> | Duration: <b>'+escapeHtml(state.workout.duration)+' min</b> (planned '+fmtMinSec(classSeconds(state.workout))+') | Participants: <b>'+escapeHtml(state.workout.participants)+'</b> | Date: <b>'+new Date().toLocaleDateString()+'</b>'+(typeof ihFunThemeTag==='function'&&state.workout.funTheme?' | Theme: <b>'+escapeHtml(ihFunThemeTag(state.workout.funTheme).replace(/^ · /,''))+'</b>':'')+'</p>';
+  if(warmup.length>0){html+='<div class="section">🔥 Warm-Up</div><table><tr><th>#</th><th>Exercise</th><th>Duration</th><th>Notes</th></tr>';warmup.forEach((ex,i)=>{html+='<tr><td>'+(i+1)+'</td><td>'+fxNameHtml(ex.name)+'</td><td>'+secOf(ex.duration,30)+'s</td><td>'+escapeHtml(ex.note||'')+'</td></tr>';});html+='</table>';}
   html+=buildCoveragePDFSection(exercises, state.workout.muscle||state.muscle);
   html+='<div class="section">⚡ Main Workout</div><table><tr><th>#</th><th>Exercise</th><th>Prop</th><th>Muscle</th><th>Targets</th><th>Reps/Time</th><th>Easier</th><th>Harder</th></tr>';
-  exercises.forEach((ex,i)=>{const sig=ex.muscles&&ex.muscles.primary?ex.muscles:resolveMuscles(ex);html+='<tr><td>'+(i+1)+'</td><td>'+escapeHtml(ex.name)+(ex.isPartner?' 👥':'')+'</td><td>'+escapeHtml(ex.propLabel)+'</td><td>'+escapeHtml(ex.muscle||'')+'</td><td style="font-size:10px">'+escapeHtml(sig.primary.map(id=>muscleLabel(id,true)).join(', '))+(sig.secondary.length?' <span style="color:#999">(+'+escapeHtml(sig.secondary.map(id=>muscleLabel(id,true)).join(', '))+')</span>':'')+'</td><td>'+escapeHtml(ex.reps)+' '+escapeHtml(ex.unit||'')+'</td><td style="color:#888;font-size:11px">'+escapeHtml(ex.easier||'')+'</td><td style="color:#888;font-size:11px">'+escapeHtml(ex.harder||'')+'</td></tr>';});
+  exercises.forEach((ex,i)=>{const sig=ex.muscles&&ex.muscles.primary?ex.muscles:resolveMuscles(ex);html+='<tr><td>'+(i+1)+'</td><td>'+fxNameHtml(ex.name)+(ex.isPartner?' 👥':'')+'</td><td>'+escapeHtml(ex.propLabel)+'</td><td>'+escapeHtml(ex.muscle||'')+'</td><td style="font-size:10px">'+escapeHtml(sig.primary.map(id=>muscleLabel(id,true)).join(', '))+(sig.secondary.length?' <span style="color:#999">(+'+escapeHtml(sig.secondary.map(id=>muscleLabel(id,true)).join(', '))+')</span>':'')+'</td><td>'+escapeHtml(ex.reps)+' '+escapeHtml(ex.unit||'')+'</td><td style="color:#888;font-size:11px">'+escapeHtml(ex.easier||'')+'</td><td style="color:#888;font-size:11px">'+escapeHtml(ex.harder||'')+'</td></tr>';});
   html+='</table>';
   const cbPdf=state.workout.coreBurner;
   if(cbPdf&&cbPdf.exercises&&cbPdf.exercises.length){
     const cbRounds=Math.max(1,parseInt(cbPdf.rounds,10)||1);
     html+='<div class="section">🎯 Core Burner — '+cbWork(cbPdf)+'s on / '+cbRest(cbPdf)+'s off'+(cbRounds>1?' &times; '+cbRounds+' rounds':'')+'</div><table><tr><th>#</th><th>Exercise</th><th>Prop</th><th>Pattern</th><th>Work</th></tr>';
-    cbPdf.exercises.forEach((ex,i)=>{html+='<tr><td>'+(i+1)+'</td><td>'+escapeHtml(ex.name)+'</td><td>'+escapeHtml(ex.propLabel)+'</td><td>'+escapeHtml(CORE_PATTERN_LABEL[ex._cbPattern]||'Core')+'</td><td>'+cbWork(cbPdf)+'s</td></tr>';});
+    cbPdf.exercises.forEach((ex,i)=>{html+='<tr><td>'+(i+1)+'</td><td>'+fxNameHtml(ex.name)+'</td><td>'+escapeHtml(ex.propLabel)+'</td><td>'+escapeHtml(CORE_PATTERN_LABEL[ex._cbPattern]||'Core')+'</td><td>'+cbWork(cbPdf)+'s</td></tr>';});
     html+='</table>';
   }
-  if(cooldown.length>0){html+='<div class="section">❄️ Cool-Down</div><table><tr><th>#</th><th>Exercise</th><th>Duration</th><th>Notes</th></tr>';cooldown.forEach((ex,i)=>{html+='<tr><td>'+(i+1)+'</td><td>'+escapeHtml(ex.name)+'</td><td>'+secOf(ex.duration,30)+'s</td><td>'+escapeHtml(ex.note||'')+'</td></tr>';});html+='</table>';}
+  if(cooldown.length>0){html+='<div class="section">❄️ Cool-Down</div><table><tr><th>#</th><th>Exercise</th><th>Duration</th><th>Notes</th></tr>';cooldown.forEach((ex,i)=>{html+='<tr><td>'+(i+1)+'</td><td>'+fxNameHtml(ex.name)+'</td><td>'+secOf(ex.duration,30)+'s</td><td>'+escapeHtml(ex.note||'')+'</td></tr>';});html+='</table>';}
   html+='<div class="footer">Generated by Inspire Habits · '+new Date().toLocaleString()+'</div></body></html>';
   const win=window.open('','_blank');
   if(!win){showToast('Pop-ups are blocked — allow them to print','error');return;}
@@ -2382,6 +2410,8 @@ function logWorkoutComplete(){
     muscle:muscleFocus(state.workout.muscle||state.muscle).label,
     muscleKey:state.workout.muscle||state.muscle,
     duration:state.workout.duration, participants:state.workout.participants,
+    atHome:!!state.workout.atHome,
+    funTheme:state.workout.funTheme||'',
     taughtMin:taughtMin, endedEarly:endedEarly,
     exercises:exs.length,
     exerciseNames:exs.map(e=>e.name),
@@ -2408,7 +2438,7 @@ function showHistory(){
       escapeHtml(e.instructorIcon||'🏋️')+' '+escapeHtml(e.instructorName||'Unknown')+(mine?' · you':'')+'</span>';
     d.innerHTML='<div class="history-top"><div class="history-date">'+escapeHtml(e.date)+' '+escapeHtml(e.time)+'</div>'+who+'</div>'+
       '<div class="history-info"><span class="history-style">'+escapeHtml(e.style)+'</span><span class="history-muscle">'+escapeHtml(e.muscle)+'</span></div>'+
-      '<div class="history-meta">'+(e.endedEarly&&e.taughtMin!=null?escapeHtml(e.taughtMin)+' of ':'')+escapeHtml(e.duration)+' min'+(e.endedEarly?' (ended early)':'')+' · '+escapeHtml(e.participants)+' people · '+escapeHtml(e.exercises)+' exercises</div>'+
+      '<div class="history-meta">'+(e.endedEarly&&e.taughtMin!=null?escapeHtml(e.taughtMin)+' of ':'')+escapeHtml(e.duration)+' min'+(e.endedEarly?' (ended early)':'')+' · '+escapeHtml(e.participants)+' people'+(e.atHome?' · 🏠 at home':'')+(typeof ihFunThemeTag==='function'?escapeHtml(ihFunThemeTag(e.funTheme)):'')+' · '+escapeHtml(e.exercises)+' exercises</div>'+
       (top?'<div class="hist-mg-row">'+top+'</div>':'')+
       (e.note?'<div class="history-note">📝 '+escapeHtml(e.note)+'</div>':'');
     hc.appendChild(d);
@@ -2435,7 +2465,7 @@ function showHistory(){
       '<div class="saved-name">'+escapeHtml(sw.name)+'</div>'+
       '<div class="history-info"><span class="history-style">'+icon+' '+escapeHtml(styleName)+'</span>'+
         (focus?'<span class="history-muscle">'+escapeHtml(focus)+'</span>':'')+'</div>'+
-      '<div class="history-meta">'+escapeHtml(sw.duration)+' min · '+escapeHtml(sw.participants)+' people · '+exCount+' exercises'+burner+'</div>'+
+              '<div class="history-meta">'+escapeHtml(sw.duration)+' min · '+escapeHtml(sw.participants)+' people'+((sw.atHome||(sw.workout&&sw.workout.atHome))?' · 🏠 at home':'')+(typeof ihFunThemeTag==='function'?escapeHtml(ihFunThemeTag(sw.funTheme||(sw.workout&&sw.workout.funTheme))):'')+' · '+exCount+' exercises'+burner+'</div>'+
       '<div class="saved-actions">'+
         '<button class="small-btn go" data-onclick="goLiveSavedWorkout('+idArg+')">📺 Go Live</button>'+
         '<button class="small-btn" data-onclick="loadSavedWorkout('+idArg+')">✏️ Open</button>'+
@@ -2500,6 +2530,12 @@ function applySavedWorkout(sw){
   if(sw.includeCooldown!=null)state.includeCooldown=sw.includeCooldown;
   if(sw.warmupDuration!=null)state.warmupDuration=sw.warmupDuration;else if(w&&w.warmupDuration!=null)state.warmupDuration=w.warmupDuration;
   if(sw.ygigWorkSec!=null)state.ygigWorkSec=sw.ygigWorkSec;else if(w&&w.ygigWorkSec!=null)state.ygigWorkSec=w.ygigWorkSec;
+  state.atHome=sw.atHome!=null?!!sw.atHome:!!(w&&w.atHome);
+  {const chk=document.getElementById('at-home-chk');if(chk)chk.checked=state.atHome;}
+  {const ft=(sw.funTheme!=null?sw.funTheme:(w&&w.funTheme))||'';
+   state.funTheme=(typeof ihFunThemeById==='function'&&ihFunThemeById(ft))?ft:'';
+   if(w)w.funTheme=state.funTheme;
+   if(typeof ihSyncFunThemeUi==='function')ihSyncFunThemeUi();}
   renderMuscleFocus();
 }
 function loadSavedWorkout(id){
@@ -2863,11 +2899,11 @@ function goLive(){
   if(typeof ihPhoneHandoff==='function')ihPhoneHandoff();
 }
 function openInstructorView(){startTimerEngine('instructor');}
-function buildSidebar(){const list=document.getElementById('sidebar-exercise-list');if(!list)return;list.innerHTML='';state.workout.exercises.forEach((ex,i)=>{const d=document.createElement('div');d.className='sidebar-ex';d.id='sidebar-ex-'+i;d.innerHTML='<span class="sidebar-num">'+(i+1)+'</span><span class="sidebar-name">'+escapeHtml(ex.name)+'</span><span class="sidebar-reps">'+escapeHtml(String(ex.reps))+'</span><button class="sidebar-swap" type="button" data-onclick="swapLive('+i+')" title="Swap this move" aria-label="Swap '+escapeHtml(ex.name)+'">⇄</button>';list.appendChild(d);});
+function buildSidebar(){const list=document.getElementById('sidebar-exercise-list');if(!list)return;list.innerHTML='';state.workout.exercises.forEach((ex,i)=>{const d=document.createElement('div');d.className='sidebar-ex';d.id='sidebar-ex-'+i;d.innerHTML='<span class="sidebar-num">'+(i+1)+'</span><span class="sidebar-name">'+fxNameHtml(ex.name)+'</span><span class="sidebar-reps">'+escapeHtml(String(ex.reps))+'</span><button class="sidebar-swap" type="button" data-onclick="swapLive('+i+')" title="Swap this move" aria-label="Swap '+escapeHtml(ex.name)+'">⇄</button>';list.appendChild(d);});
   const cb=state.workout.coreBurner;
   if(cb&&cb.exercises&&cb.exercises.length){
     const hd=document.createElement('div');hd.className='sidebar-cb-head';hd.textContent='🎯 Core Burner';list.appendChild(hd);
-    cb.exercises.forEach((ex,i)=>{const d=document.createElement('div');d.className='sidebar-ex sidebar-cb';d.id='sidebar-cb-'+i;d.innerHTML='<span class="sidebar-num">•</span><span class="sidebar-name">'+escapeHtml(ex.name)+'</span><span class="sidebar-reps">'+escapeHtml(String(cbWork(cb)))+'s</span>';list.appendChild(d);});
+    cb.exercises.forEach((ex,i)=>{const d=document.createElement('div');d.className='sidebar-ex sidebar-cb';d.id='sidebar-cb-'+i;d.innerHTML='<span class="sidebar-num">•</span><span class="sidebar-name">'+fxNameHtml(ex.name)+'</span><span class="sidebar-reps">'+escapeHtml(String(cbWork(cb)))+'s</span>';list.appendChild(d);});
   }
 }
 // The next step anyone actually moves in (skips rests and "get ready" cards).
@@ -2875,15 +2911,21 @@ function nextWorkStep(seq,idx){
   for(let k=idx+1;k<seq.length;k++){const s=seq[k];if(s.phase==='work'||s.phase==='warmup'||s.phase==='cooldown')return s;}
   return null;
 }
+// Optional fun theme (themes.js). Display only — ex.name stays the real name.
+function fxName(n){return typeof ihFunName==='function'?ihFunName(n):String(n==null?'':n);}
+function fxNameHtml(n){return typeof ihFunNameHtml==='function'?ihFunNameHtml(n):escapeHtml(n==null?'':n);}
+function fxThemedStep(step){return !!(step&&step.name&&!step._ladder&&(step.phase==='work'||step.phase==='warmup'||step.phase==='cooldown'));}
+function fxStepName(step){return fxThemedStep(step)?fxName(step.name):((step&&step.name)||'');}
+function fxStepNameHtml(step){return fxThemedStep(step)?fxNameHtml(step.name):escapeHtml((step&&step.name)||'');}
 // What the room needs to know is coming: during a rest that is the next move
 // and the kit to grab, not just the word "Rest".
 function nextUpLabel(seq,idx){
   const step=seq[idx],next=seq[idx+1];if(!step||!next)return '';
   const nw=nextWorkStep(seq,idx);
-  const nwTxt=nw&&nw.name?nw.name+(nw.phase==='work'&&nw.prop?' · '+nw.prop:''):'';
+  const nwTxt=nw&&nw.name?fxStepName(nw)+(nw.phase==='work'&&nw.prop?' · '+nw.prop:''):'';
   if(step.phase!=='work'&&nwTxt)return nwTxt;
   if(next.phase==='rest')return '😮‍💨 Rest'+(nwTxt?' → '+nwTxt:'');
-  return next.name||next.label||'';
+  return fxStepName(next)||next.label||'';
 }
 function stepExercise(step){
   const w=state.workout;if(!w||!step||step._ladder)return null;
@@ -2920,13 +2962,13 @@ function loadTimerStep(idx){
     const ygigInfo=document.getElementById('ygig-partner-info');
     if(ygigInfo){
       ygigInfo.style.display='block';
-      ygigInfo.innerHTML='<div class="ygig-timer-primary"><span class="ygig-timer-label">'+escapeHtml(step.label)+'</span><span class="ygig-timer-ex">'+escapeHtml(step.name)+'</span><span class="ygig-timer-reps">'+escapeHtml(String(step._ygig.reps))+' reps</span></div><div class="ygig-timer-rest"><span class="ygig-timer-label-rest">PARTNER — ACTIVE REST</span><span class="ygig-timer-ex-rest">'+escapeHtml(step._ygig.partner)+'</span><span class="ygig-timer-reps-rest">Hold until done</span></div>';
+      ygigInfo.innerHTML='<div class="ygig-timer-primary"><span class="ygig-timer-label">'+escapeHtml(step.label)+'</span>      <span class="ygig-timer-ex">'+fxStepNameHtml(step)+'</span><span class="ygig-timer-reps">'+escapeHtml(String(step._ygig.reps))+' reps</span></div><div class="ygig-timer-rest"><span class="ygig-timer-label-rest">PARTNER — ACTIVE REST</span><span class="ygig-timer-ex-rest">'+fxNameHtml(step._ygig.partner)+'</span><span class="ygig-timer-reps-rest">Hold until done</span></div>';
     }
-    document.getElementById('timer-exercise').textContent=step.name||'';
+          document.getElementById('timer-exercise').innerHTML=fxStepNameHtml(step);
   } else {
     const ygigInfo=document.getElementById('ygig-partner-info');
     if(ygigInfo) ygigInfo.style.display='none';
-    document.getElementById('timer-exercise').textContent=step.name||'';
+          document.getElementById('timer-exercise').innerHTML=fxStepNameHtml(step);
   }
   const ladderEl=document.getElementById('block-ladder');
   if(ladderEl){
@@ -2938,7 +2980,7 @@ function loadTimerStep(idx){
           (i<rungs.length-1?'<span class="hl-arrow">→</span>':'')).join('')+'</div>':'')+
         '<div class="hl-grid">'+step._ladder.map(l=>'<div class="hl-item">'+
           '<span class="hl-n">'+escapeHtml(String(l.n))+'</span>'+
-          '<span class="hl-name">'+escapeHtml(l.name)+'</span>'+
+          '<span class="hl-name">'+fxNameHtml(l.name)+'</span>'+
           (rungs?'':'<span class="hl-reps">'+escapeHtml(String(l.reps))+'</span>')+'</div>').join('')+'</div>';
     } else { ladderEl.style.display='none'; ladderEl.innerHTML=''; }
   }
@@ -2968,17 +3010,18 @@ function loadParticipantStep(idx){
 
   // Build the headline + sub-line first, then write once. (Previously the
   // 100-rep / YGIG text was overwritten by the generic assignment below.)
-  let headline=step.name||'';
+  let headline=escapeHtml(step.name||'');
+  if(fxThemedStep(step))headline=fxStepNameHtml(step);
   const nu=nextUpLabel(seq,idx);
   let subline=nu?'Next: '+nu:'';
   if(step.phase==='work'&&step._paceNote){ subline=step._paceNote; }
   if(step.phase==='work'&&step._ygig){
-    headline=step.name+' — '+step._ygig.reps+' reps';
-    subline='Partner: '+step._ygig.partner+' (active rest)';
+    headline=fxStepNameHtml(step)+' — '+escapeHtml(String(step._ygig.reps))+' reps';
+    subline='Partner: '+fxName(step._ygig.partner)+' (active rest)';
   }
   const pNext=document.getElementById('p-next');
   if(!maOn){
-    document.getElementById('p-exercise').textContent=headline;
+    document.getElementById('p-exercise').innerHTML=headline;
     if(pNext)pNext.textContent=subline;
     const pProp=document.getElementById('p-prop');pProp.textContent=step.prop||'';pProp.style.display=step.prop?'block':'none';
   } else if(pNext){
@@ -3002,7 +3045,7 @@ function loadParticipantStep(idx){
           (i<rungs.length-1?'<span class="pl-arrow">→</span>':'')).join('')+'</div>':'')+
         '<div class="pl-grid">'+step._ladder.map(l=>'<div class="pl-item">'+
           '<span class="pl-n">'+escapeHtml(String(l.n))+'</span>'+
-          '<span class="pl-name">'+escapeHtml(l.name)+'</span>'+
+          '<span class="pl-name">'+fxNameHtml(l.name)+'</span>'+
           (rungs?'':'<span class="pl-reps">'+escapeHtml(String(l.reps))+'</span>')+'</div>').join('')+'</div>';
     } else { pLad.style.display='none'; pLad.innerHTML=''; }
   }
@@ -3294,6 +3337,7 @@ function offerSessionResume(){
     '<button class="resume-btn" id="resume-yes">▶ Resume class</button>'+
     '<button class="resume-btn ghost" id="resume-no">Discard</button>';
   document.body.appendChild(bar);
+  if(typeof ihWatchBar==='function'){ihWatchBar(bar);ihRestackBars();}
   document.getElementById('resume-yes').onclick=()=>{bar.remove();resumeLiveSession(s);};
   document.getElementById('resume-no').onclick=()=>{bar.remove();clearLiveSession();};
   return true;
@@ -3417,8 +3461,8 @@ function exportTieredPDF() {
   <p style="color:#666;font-size:13px">Style: <b>${escapeHtml(styleCfg.name)}</b> | Focus: <b>${escapeHtml(muscleFocus(state.muscle).label)}</b> | Duration: <b>${escapeHtml(state.workout.duration)} min</b> (planned ${fmtMinSec(classSeconds(state.workout))}) | Participants: <b>${escapeHtml(state.workout.participants)}</b> | Date: <b>${new Date().toLocaleDateString()}</b></p>`;
   if(typeof buildTieredPDFSection==='function') html+=buildTieredPDFSection(exercises);
   html+=buildCoveragePDFSection(exercises, state.workout.muscle||state.muscle);
-  if(warmup.length>0){html+=`<div class="section">🔥 Warm-Up</div><table><tr><th>#</th><th>Exercise</th><th>Duration</th><th>Notes</th></tr>`;warmup.forEach((ex,i)=>{html+=`<tr><td>${i+1}</td><td>${escapeHtml(ex.name)}</td><td>${secOf(ex.duration,30)}s</td><td>${escapeHtml(ex.note||'')}</td></tr>`;});html+=`</table>`;}
-  if(cooldown.length>0){html+=`<div class="section">❄️ Cool-Down</div><table><tr><th>#</th><th>Exercise</th><th>Duration</th><th>Notes</th></tr>`;cooldown.forEach((ex,i)=>{html+=`<tr><td>${i+1}</td><td>${escapeHtml(ex.name)}</td><td>${secOf(ex.duration,30)}s</td><td>${escapeHtml(ex.note||'')}</td></tr>`;});html+=`</table>`;}
+  if(warmup.length>0){html+=`<div class="section">🔥 Warm-Up</div><table><tr><th>#</th><th>Exercise</th><th>Duration</th><th>Notes</th></tr>`;warmup.forEach((ex,i)=>{html+=`<tr><td>${i+1}</td><td>${fxNameHtml(ex.name)}</td><td>${secOf(ex.duration,30)}s</td><td>${escapeHtml(ex.note||'')}</td></tr>`;});html+=`</table>`;}
+  if(cooldown.length>0){html+=`<div class="section">❄️ Cool-Down</div><table><tr><th>#</th><th>Exercise</th><th>Duration</th><th>Notes</th></tr>`;cooldown.forEach((ex,i)=>{html+=`<tr><td>${i+1}</td><td>${fxNameHtml(ex.name)}</td><td>${secOf(ex.duration,30)}s</td><td>${escapeHtml(ex.note||'')}</td></tr>`;});html+=`</table>`;}
   html+=`<div class="footer">Generated by Inspire Habits · ${new Date().toLocaleString()}</div></body></html>`;
   const win=window.open('','_blank');
   if(!win){showToast('Pop-ups are blocked — allow them to print','error');return;}
@@ -3497,6 +3541,7 @@ function beginInstructorSession(id){
   if(typeof Roster!=='undefined'&&Roster.load)Roster.load();
   if(typeof renderProfileSwitcher==='function')renderProfileSwitcher();
   if(typeof updateProfileBadge==='function')updateProfileBadge();
+  if(typeof ihApplyInstructorPrefs==='function')ihApplyInstructorPrefs();
   // Resume only after the lists are the right person's, so the bar can't
   // offer a class belonging to whoever taught before them.
   setTimeout(offerSessionResume,350);
@@ -3506,13 +3551,9 @@ function startInstructorSitting(){
   if(already){beginInstructorSession(already);return;}
   // If profiles.js failed to load, fall back to the shared keys rather than
   // locking an instructor out of their own app.
-  if(typeof ihNeedsInstructorPick!=='function'||typeof ihMountInstructorPicker!=='function'){
+  if(typeof ihNeedsInstructorPick!=='function'||typeof ihMountInstructorPicker!=='function'||!ihNeedsInstructorPick()){
     loadPersonalData();
-    setTimeout(offerSessionResume,350);
-    return;
-  }
-  if(!ihNeedsInstructorPick()){
-    loadPersonalData();
+    if(typeof ihApplyInstructorPrefs==='function')ihApplyInstructorPrefs();
     setTimeout(offerSessionResume,350);
     return;
   }
