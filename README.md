@@ -186,7 +186,7 @@ The colours live in the `:root` block at the top of `style.css`.
 | Password | Gets you |
 |---|---|
 | **Instructor** | The whole builder — generate, edit, save, run class, equipment |
-| **Athlete** | Their own tracking page for the class they were sent, nothing else |
+| **Athlete** | No password needed — their class link opens their tracking page |
 
 The studio name is not a secret, only a prompt. The password is what keeps
 people out.
@@ -236,11 +236,9 @@ An athlete who opens the bare site without a class link gets a
 class link in the last 12 hours, that screen has a **Reopen last class**
 button, so closing the tab mid-class costs one tap.
 
-**Most athletes never type anything.** The class link carries an unlock
-token, so opening it takes them straight to their tracking page. The
-athlete code is only needed by someone typing the address in by hand.
-Changing the athlete code invalidates the token in every link you've
-already handed out, which is usually what you want.
+**Athletes do not need an access code.** Their class link opens the tracking
+page directly. The separate athlete code is only for someone typing the site
+address in by hand.
 
 ### Changing a code
 
