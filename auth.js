@@ -417,8 +417,9 @@ function ihSaveSession(role, shared, key) {
 // is accepted as a saved sign-in (that is how pre-v2 sign-ins keep
 // working). That is why v3 exists: an s3 record carries the key only the
 // real code produces, and once the instructor line is v3 an s2 instructor
-// record is refused. Athletes can still hold an s2 record, because a
-// class link signs them in without a code (see ihTryClassLink).
+// record is refused. Athletes can still hold an s2 record, because the
+// class QR link signs them in without a code (see ihTryLinkToken), and a
+// class link opens its live view with no sign-in at all (ihIsClassLink).
 //
 // None of this stops someone editing the running JavaScript in their own
 // browser — nothing in a page with no server can. It stops the easy ways.
@@ -602,20 +603,51 @@ function ihSignOut() {
 }
 
 // ─── AUTO-UNLOCK FROM A CLASS LINK ────────────────────────────
-// A class link is the athlete's entry point. Its payload is not a secret, so
-// requiring a separate code or token adds friction without protecting data.
-function ihTryClassLink() {
-  const m = /[#&?]c=([A-Za-z0-9_-]+)/.exec(location.href || '');
+// Typing a code while a class waits is friction nobody needs, so the QR
+// code carries a token that unlocks the athlete side on arrival. Any class
+// link opens its live view anyway (see the guest pass below); the token
+// adds a saved athlete sign-in so "Reopen last class" works later.
+//
+// The token is a prefix of the athlete hash. That is enough to show the
+// link came from this build, and it gives away nothing: a hash cannot be
+// run backwards to the code. Re-issuing the athlete code changes the
+// hash, so every old link stops unlocking at the same moment.
+//
+// This is exactly as strong as the athlete code itself — which is to say,
+// a doorway. Anyone the link reaches can open the athlete side.
+function ihLinkToken() {
+  const line = AUTH.athlete || '';
+  const m = IH_V3.exec(line) || IH_V2.exec(line);
+  return (m ? m[3] : line).slice(0, 16);
+}
+
+function ihTryLinkToken() {
+  const m = /[#&?]k=([A-Za-z0-9]+)/.exec(location.href || '');
   if (!m) return null;
-  // Store an athlete session so a later class link still opens directly.
+  const want = ihLinkToken();
+  if (!want || m[1] !== want) return null;
+  // Store the full hash, so the athlete stays signed in afterwards and a
+  // later class link — or the bare site — still knows who they are.
   ihSaveSession('athlete', false);
   ihRoleCache = 'athlete';
   return 'athlete';
 }
 
+// Guest pass: a class link (#c=…) opens the live class view with no
+// sign-in at all, even when the k token is missing, stale from a code
+// change, or trimmed off by a chat app. The role lasts for this page only
+// and nothing is saved, so the bare site and the builder stay locked.
+// The instructor's phone link (#i=…) is not a class link and still needs
+// the instructor code.
+function ihIsClassLink() {
+  const h = location.hash || '';
+  return /[#&]c=[A-Za-z0-9_\-]{4,}/.test(h) && !/[#&]i=/.test(h);
+}
+
 // Runs before the gate decides anything, so a scanned phone never sees
 // the lock screen at all.
-if (!ihRole()) ihTryClassLink();
+if (!ihRole()) ihTryLinkToken();
+if (!ihRole() && ihIsClassLink()) ihRoleCache = 'athlete';
 
 // ─── THE GATE ─────────────────────────────────────────────────
 // The page ships with class="ih-locked" already on <html>, so the app is
@@ -695,8 +727,11 @@ function ihLockScreen() {
       '<button type="submit" id="ih-lock-go">Sign in</button>' +
     '</form>' +
     '<div class="ih-lock-err" id="ih-lock-err" role="alert" aria-live="polite"></div>' +
-    '<div class="ih-lock-hint">Athletes: open the class link from your instructor; ' +
-      'no password is needed. This screen is for instructor sign-in.</div>' +
+    (ihLastClassHash()
+      ? '<button type="button" id="ih-lock-reopen" class="ih-lock-reopen">↩ Back to your class</button>'
+      : '') +
+    '<div class="ih-lock-hint">Athletes: no sign-in needed. Scan the class QR code or ' +
+      'open the class link and your workout opens straight away.</div>' +
     (shipped ? '<div class="ih-lock-warn">⚠ ' + ihShippedCodeWarning() + '</div>' : '') +
   '</div>';
 }

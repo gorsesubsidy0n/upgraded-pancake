@@ -13,7 +13,7 @@
 //  fresh copy of everything and the bar appears on open pages. Without a
 //  bump, changed files are still noticed by the background check.
 // ============================================================
-const APP_VERSION = '2026.11.12';
+const APP_VERSION = '2026.11.13';
 const CACHE = 'inspire-habits-' + APP_VERSION;
 const STAGE = CACHE + '-next';
 const STAGE_DONE = '__ih_stage_complete__';
