@@ -77,6 +77,15 @@ test('class plan round-trips, including more than 36 distinct moves', () => {
   assert.strictEqual(d.t0, 123);
 });
 
+test('athlete class links open directly without an access token', () => {
+  const { api } = loadParticipant();
+  const url = api.athleteUrl(
+    { mode: 'a', sid: 'class1', title: 'Class', meta: '30 min' },
+    { url: 'https://example.com/app/' }
+  );
+  assert.match(url, /^https:\/\/example\.com\/app\/#c=[A-Za-z0-9_-]+$/);
+});
+
 test('decodePayload clamps hostile counts and sanitises the class id', () => {
   const { api } = loadParticipant();
   const fields = ['4', 'c', 'a<b>"c', 'T', 'm', '1000000000', 'Squat^10^reps', '999999', '99999', '-5', 'Plank^30^s',

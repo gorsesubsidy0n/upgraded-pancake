@@ -138,6 +138,13 @@ test('auth: throttle is capped at 2 minutes and decays after an hour', () => {
   assert.ok(api.ihLockRemainingMs() > 0 && api.ihLockRemainingMs() <= 15000);
 });
 
+test('auth: a class link opens athlete mode without an access code or token', () => {
+  const { api, store } = loadAuth(null, { href: 'https://x/#c=eyJjbGFzcyI6MX0' });
+  assert.strictEqual(api.ihRole(), 'athlete');
+  assert.match(store.ih_auth, /^s2\.athlete\./);
+  assert.strictEqual(loadAuth().api.ihRole(), null, 'the bare site stays locked');
+});
+
 test('auth: legacy saved sign-in still unlocks and is upgraded; junk does not', () => {
   const legacy = crypto.randomBytes(32).toString('hex');
   const { api, store } = loadAuth({ ih_auth: legacy });

@@ -417,8 +417,8 @@ function ihSaveSession(role, shared, key) {
 // is accepted as a saved sign-in (that is how pre-v2 sign-ins keep
 // working). That is why v3 exists: an s3 record carries the key only the
 // real code produces, and once the instructor line is v3 an s2 instructor
-// record is refused. Athletes can still hold an s2 record, because the
-// class QR link signs them in without a code (see ihTryLinkToken).
+// record is refused. Athletes can still hold an s2 record, because a
+// class link signs them in without a code (see ihTryClassLink).
 //
 // None of this stops someone editing the running JavaScript in their own
 // browser — nothing in a page with no server can. It stops the easy ways.
@@ -602,29 +602,12 @@ function ihSignOut() {
 }
 
 // ─── AUTO-UNLOCK FROM A CLASS LINK ────────────────────────────
-// Typing a code while a class waits is friction nobody needs, so the QR
-// code carries a token that unlocks the athlete side on arrival.
-//
-// The token is a prefix of the athlete hash. That is enough to show the
-// link came from this build, and it gives away nothing: a hash cannot be
-// run backwards to the code. Re-issuing the athlete code changes the
-// hash, so every old link stops unlocking at the same moment.
-//
-// This is exactly as strong as the athlete code itself — which is to say,
-// a doorway. Anyone the link reaches can open the athlete side.
-function ihLinkToken() {
-  const line = AUTH.athlete || '';
-  const m = IH_V3.exec(line) || IH_V2.exec(line);
-  return (m ? m[3] : line).slice(0, 16);
-}
-
-function ihTryLinkToken() {
-  const m = /[#&?]k=([A-Za-z0-9]+)/.exec(location.href || '');
+// A class link is the athlete's entry point. Its payload is not a secret, so
+// requiring a separate code or token adds friction without protecting data.
+function ihTryClassLink() {
+  const m = /[#&?]c=([A-Za-z0-9_-]+)/.exec(location.href || '');
   if (!m) return null;
-  const want = ihLinkToken();
-  if (!want || m[1] !== want) return null;
-  // Store the full hash, so the athlete stays signed in afterwards and a
-  // later class link — or the bare site — still knows who they are.
+  // Store an athlete session so a later class link still opens directly.
   ihSaveSession('athlete', false);
   ihRoleCache = 'athlete';
   return 'athlete';
@@ -632,7 +615,7 @@ function ihTryLinkToken() {
 
 // Runs before the gate decides anything, so a scanned phone never sees
 // the lock screen at all.
-if (!ihRole()) ihTryLinkToken();
+if (!ihRole()) ihTryClassLink();
 
 // ─── THE GATE ─────────────────────────────────────────────────
 // The page ships with class="ih-locked" already on <html>, so the app is
@@ -712,9 +695,8 @@ function ihLockScreen() {
       '<button type="submit" id="ih-lock-go">Sign in</button>' +
     '</form>' +
     '<div class="ih-lock-err" id="ih-lock-err" role="alert" aria-live="polite"></div>' +
-    '<div class="ih-lock-hint">Athletes: the password is the class code on the screen ' +
-      'at the front, or ask your instructor. Scanning the class QR code signs you in ' +
-      'without typing.</div>' +
+    '<div class="ih-lock-hint">Athletes: open the class link from your instructor; ' +
+      'no password is needed. This screen is for instructor sign-in.</div>' +
     (shipped ? '<div class="ih-lock-warn">⚠ ' + ihShippedCodeWarning() + '</div>' : '') +
   '</div>';
 }

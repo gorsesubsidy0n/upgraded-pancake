@@ -601,7 +601,7 @@
   function athleteUrl(payload, base) {
     const b = base || athleteBase();
     if (!b.url) return '';
-    return b.url + '#' + HASH_KEY + '=' + encodePayload(payload) + linkTokenSuffix();
+    return b.url + '#' + HASH_KEY + '=' + encodePayload(payload);
   }
 
   // The link for the scan code. A clock class's link is mostly per-move
@@ -613,16 +613,6 @@
     const full = window.IHQR && IHQR.encode(url);
     if (!payload.info || (full && full.version <= SCAN_MAX_VERSION)) return url;
     return athleteUrl(Object.assign({}, payload, { info: null }), base);
-  }
-
-  // The access gate ships a token that unlocks the athlete side straight
-  // from the link, so nobody types a code while the class waits. Absent
-  // when the gate isn't loaded, which keeps this file usable on its own.
-  function linkTokenSuffix() {
-    try {
-      const t = typeof ihLinkToken === 'function' ? ihLinkToken() : '';
-      return t ? '&k=' + t : '';
-    } catch (e) { return ''; }
   }
 
   // app.js declares `state` with const, so it is a global *lexical* binding and
@@ -923,11 +913,7 @@
   // Put the athlete id in the link so reopening it — from history, a
   // bookmark, or a phone waking back up — lands on the same page.
   function writeUidToUrl(uid) {
-    // Keep the unlock token that came in with the link. Dropping it would
-    // lock this phone out the next time it reopened the page from history.
-    const k = /[#&?]k=([A-Za-z0-9]+)/.exec(location.href || '');
     const hash = '#' + HASH_KEY + '=' + rawPayload +
-      (k ? '&k=' + k[1] : '') +
       '&' + UID_KEY + '=' + encodeURIComponent(uid);
     try { history.replaceState(null, '', location.href.split('#')[0] + hash); }
     catch (e) { try { location.hash = hash.slice(1); } catch (e2) {} }
@@ -2017,7 +2003,7 @@
 
   // For tests/live.test.js: the codec and the clock maths, nothing stateful.
   window.__ihLiveTest = {
-    encodePayload, decodePayload, packPlan, unpackPlan, classPayloadFromWorkout,
+    encodePayload, decodePayload, packPlan, unpackPlan, classPayloadFromWorkout, athleteUrl,
     liveTimer, classStartEpoch, classPausedAt,
     athlete(c, p) { cls = c; prog = p; occCache = null; },
     planPosition, resyncOptions, resyncList, clockFace,
