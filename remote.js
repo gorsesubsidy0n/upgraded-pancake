@@ -278,6 +278,7 @@
     duration: [0, 3600], work: [0, 600], rest: [0, 600], cWork: [0, 600], cRest: [0, 600],
     roundRest: [0, 600], participants: [0, 500], mainDur: [0, 180], cReps: [0, 500],
     ygigWorkSec: [5, 600], seconds: [0, 3600], warmupDuration: [0, 60], stationCount: [0, 60],
+    emomReps: [0, 500], emomMin: [0, 120],
   };
   const COUNT_KEYS = { rounds: 1 };
   const LIST_KEYS = { exercises: 1, warmup: 1, cooldown: 1 };

@@ -716,6 +716,17 @@ Glutes themes are kept (Glutes is now labelled "Glutes + Hamstrings").
   pushes out the oldest.
 - The swap list includes your custom exercises and respects your equipment
   and the per-prop people limits.
+- **Save custom moves for later.** When you add a custom exercise to a class,
+  tick **Save to my library** to keep it for future classes. A custom move
+  that's already in a plan shows a **⭐** button; tap it to add that move to
+  your library. Saving again under the same name updates the existing entry
+  rather than adding a duplicate.
+- **EMOM reps per minute.** On an EMOM plan, switch the banner from
+  **⏱ Timed work** to **🔢 Reps per minute**. Each minute then lists its moves
+  with a rep count, and you choose which minute each move goes in. Put two
+  moves in the same minute to stack them, for example 10 squats + 10 bicep
+  curls. The timer shows the whole minute as one line ("10 Squat + 10 Bicep
+  Curl") and repeats the minutes until the block ends.
 
 ### Mixed ability
 

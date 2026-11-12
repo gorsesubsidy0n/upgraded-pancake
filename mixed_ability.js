@@ -529,6 +529,7 @@ function makeTieredExCard(ex, i) {
       </div>
       <div class="plan-card-actions">
         <button class="edit-btn" data-onclick="editPlanExercise(${i})" title="Edit" aria-label="Edit ${escapeHtml(ex.name)}">✏️</button>
+        ${typeof saveLibBtn === 'function' ? saveLibBtn('main', i, ex) : ''}
         <button class="swap-btn" data-onclick="swapExercise(${i})"     title="Swap" aria-label="Swap ${escapeHtml(ex.name)}">⇄</button>
         <button class="del-btn"  data-onclick="removeExercise(${i})"   title="Remove" aria-label="Remove ${escapeHtml(ex.name)}">✕</button>
       </div>
