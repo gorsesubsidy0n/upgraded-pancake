@@ -7,7 +7,7 @@ const state = {
   participants: 8, style: null, muscle: 'full', duration: 45,
   difficulty: 'intermediate',
   props: ['dumbbells','bench','bodyweight'],
-  includeWarmup: true, includeCooldown: true, warmupDuration: 7, ygigWorkSec: 45,
+  includeWarmup: true, includeCooldown: true, warmupDuration: 7, ygigWorkSec: 45, emomMode: 'time',
   // At-home class: everyone uses their own gear, so studio counts and
   // "max people at once" caps don't apply.
   atHome: false,
@@ -444,14 +444,70 @@ function supersetPlan(w){
 }
 // A real minute: the clock turns over every 60s on the dot. One move gets
 // 40s on / 20s off; two moves share the minute 20s each with a 5s change-over.
+// In "reps per minute" mode the instructor sets a rep target for each move
+// and which minute it belongs to (e.g. minute 1: 10 squats + 10 curls). The
+// clock still turns over every 60s; whatever is left is rest.
+function emomRepsMode(w){return !!(w&&w.emomMode==='reps');}
+function emomDefaultPerMin(n){return n>=6?2:1;}
+function emomRepsOf(ex){
+  const n=parseInt(ex&&ex.emomReps,10); if(n>0)return n;
+  const r=parseInt(ex&&ex.reps,10); return r>0?r:10;
+}
+function emomMinOf(ex,i,n){
+  const m=parseInt(ex&&ex.emomMin,10);
+  return m>0?m:Math.floor(i/emomDefaultPerMin(n))+1;
+}
 function emomPlan(w){
   const ex=(w&&w.exercises)||[];
-  const exPerMin=ex.length>=6?2:1;
+  const budgetMins=Math.round(mainBudgetSec(w)/60);
+  if(emomRepsMode(w)){
+    const byMin=new Map();
+    let last=ex.reduce((mx,e)=>Math.max(mx,parseInt(e&&e.emomMin,10)||0),0);
+    const explicit=last>0;
+    ex.forEach((e,i)=>{
+      // Moves added after minutes were set get a minute of their own.
+      const m=explicit&&!(parseInt(e&&e.emomMin,10)>0)?++last:emomMinOf(e,i,ex.length);
+      if(!byMin.has(m))byMin.set(m,[]);byMin.get(m).push(i);
+    });
+    const groups=[...byMin.keys()].sort((a,b)=>a-b).map(m=>{
+      const idxs=byMin.get(m);
+      return {start:idxs[0],idxs,minute:m,items:idxs.map(i=>ex[i])};
+    });
+    const totalMins=groups.length?Math.max(groups.length,budgetMins):0;
+    const exPerMin=groups.reduce((mx,g)=>Math.max(mx,g.items.length),0);
+    return {mode:'reps',exPerMin,workPerEx:60,groups,minuteSec:60,totalMins};
+  }
+  const exPerMin=emomDefaultPerMin(ex.length);
   const groups=[];
-  for(let i=0;i<ex.length;i+=exPerMin) groups.push({start:i,items:ex.slice(i,i+exPerMin)});
+  for(let i=0;i<ex.length;i+=exPerMin){
+    const idxs=[];for(let j=i;j<Math.min(ex.length,i+exPerMin);j++)idxs.push(j);
+    groups.push({start:i,idxs,items:ex.slice(i,i+exPerMin)});
+  }
   const workPerEx=exPerMin===2?20:40;
-  const totalMins=groups.length?Math.max(groups.length,Math.round(mainBudgetSec(w)/60)):0;
-  return {exPerMin,workPerEx,groups,minuteSec:60,totalMins};
+  const totalMins=groups.length?Math.max(groups.length,budgetMins):0;
+  return {mode:'time',exPerMin,workPerEx,groups,minuteSec:60,totalMins};
+}
+// One line per minute for the clock and the phones: "10 Squat + 10 Curl".
+function emomRepsLine(items){return items.map(e=>emomRepsOf(e)+' '+fxName(e.name)).join(' + ');}
+// Rewrites every move's minute to its position in the plan (1, 2, 3 …) so
+// gaps left by removed moves close up and the editor's numbers match.
+function emomNormalizeMins(w){
+  const p=emomPlan(Object.assign({},w,{emomMode:'reps'}));
+  p.groups.forEach((g,k)=>g.idxs.forEach(i=>{w.exercises[i].emomMin=k+1;}));
+  w.exercises.forEach(e=>{if(!(parseInt(e.emomReps,10)>0))e.emomReps=emomRepsOf(e);});
+  return p;
+}
+function makeEmomEditor(w,p){
+  const n=p.groups.length;
+  const opts=sel=>{let o='';for(let k=1;k<=n+1;k++)o+='<option value="'+k+'"'+(k===sel?' selected':'')+'>'+(k>n?'New minute':'Minute '+k)+'</option>';return o;};
+  return '<div class="emom-minutes">'+p.groups.map((g,k)=>
+    '<div class="emom-min"><div class="emom-min-head">Minute '+(k+1)+'</div>'+g.idxs.map(i=>{
+      const ex=w.exercises[i];
+      return '<div class="emom-row"><span class="emom-row-name">'+fxNameHtml(ex.name)+'</span>'+
+        '<input type="number" min="1" max="500" aria-label="Reps" value="'+emomRepsOf(ex)+'" data-onchange="setEmomReps('+i+',this.value)"/>'+
+        '<span>reps</span><select aria-label="Minute" data-onchange="setEmomMin('+i+',this.value)">'+opts(k+1)+'</select></div>';
+    }).join('')+'</div>').join('')+
+    '</div><div class="emom-hint">Move an exercise into another minute to stack it (e.g. 10 squats + 10 bicep curls). Finish the reps, rest the remainder of the minute.</div>';
 }
 // An odd move out has to partner with something; it is never paired with itself.
 const YGIG_ACTIVE_REST={name:'Plank or Wall-Sit Hold',propLabel:'Bodyweight',reps:'hold',prop:'bodyweight',_fallback:true};
@@ -1717,6 +1773,7 @@ function generateWorkout(opts) {
     atHome:!!state.atHome,
     funTheme:state.funTheme||'',
     ygigWorkSec:state.ygigWorkSec,
+    emomMode:state.emomMode==='reps'?'reps':'time',
     muscle:state.muscle,
     duration:classLen,
     // Coverage metadata produced by programming.js
@@ -1815,10 +1872,19 @@ function appendStyleBanners(container) {
       ? ' <b>Note:</b> '+limitedInPlan.map(e=>escapeHtml(e.propLabel)).join(', ')+' — shared prop, use as a station.'
       : '';
     const cycles = p.groups.length ? Math.round(p.totalMins/p.groups.length*10)/10 : 0;
-    const shape = p.exPerMin===2
-      ? 'two moves share each minute: 20s on the first, a 5s switch, 20s on the second, then 15s rest'
-      : 'one move per minute: 40s work, 20s rest';
-    banner.innerHTML='<span class="sib-icon">⏱️</span><span><b>EMOM:</b> '+exercises.length+' exercises, '+shape+'. <b>'+p.totalMins+' minutes</b> — the list cycles '+cycles+'× to fill the block.'+limitedNote+'</span>';
+    const reps = p.mode==='reps';
+    const shape = reps
+      ? 'reps per minute: finish each minute’s reps, rest whatever is left of the minute'
+      : p.exPerMin===2
+        ? 'two moves share each minute: 20s on the first, a 5s switch, 20s on the second, then 15s rest'
+        : 'one move per minute: 40s work, 20s rest';
+    const blurb='<span class="sib-icon">⏱️</span><span><b>EMOM:</b> '+exercises.length+' exercises, '+shape+'. <b>'+p.totalMins+' minutes</b> — '+
+      (reps?p.groups.length+' minute'+(p.groups.length===1?'':'s')+' planned, cycling '+cycles+'× to fill the block.':'the list cycles '+cycles+'× to fill the block.')+limitedNote+'</span>';
+    const toggle='<div class="ygig-time-control"><span class="ygig-time-label">Each minute:</span><div class="ygig-time-btns">'+
+      '<button class="ygig-time-btn'+(reps?'':' active')+'" data-onclick="setEmomMode(\'time\')">⏱ Timed work</button>'+
+      '<button class="ygig-time-btn'+(reps?' active':'')+'" data-onclick="setEmomMode(\'reps\')">🔢 Reps per minute</button></div></div>';
+    banner.classList.add('rung-banner');
+    banner.innerHTML='<div class="sib-row">'+blurb+'</div>'+toggle+(reps?makeEmomEditor(state.workout,p):'');
     container.appendChild(banner);
   }
   if (style==='tabata') {
@@ -2136,6 +2202,7 @@ function makePlanExCard(ex,i) {
       '<div class="exercise-reps-label">'+escapeHtml(ex.unit)+'</div>'+
       '<div class="plan-card-actions">'+
         '<button class="edit-btn" data-onclick="editPlanExercise('+i+')" title="Edit" aria-label="Edit '+escapeHtml(ex.name)+'">✏️</button>'+
+        saveLibBtn('main',i,ex)+
         '<button class="swap-btn" data-onclick="swapExercise('+i+')" title="Swap (keeps muscle coverage)" aria-label="Swap '+escapeHtml(ex.name)+'">⇄</button>'+
         '<button class="del-btn"  data-onclick="removeExercise('+i+')" title="Remove" aria-label="Remove '+escapeHtml(ex.name)+'">✕</button>'+
       '</div>'+
@@ -2156,10 +2223,16 @@ function makePlanWarmCoolCard(ex,i,type) {
       '<div class="exercise-reps-label">hold/work</div>'+
       '<div class="plan-card-actions">'+
         '<button class="edit-btn" data-onclick="editWarmCoolExercise(\''+type+'\','+i+')" title="Edit">✏️</button>'+
+        saveLibBtn(type,i,ex)+
         '<button class="del-btn"  data-onclick="removeWarmCoolExercise(\''+type+'\','+i+')" title="Remove">✕</button>'+
       '</div>'+
     '</div>';
   return card;
+}
+// Custom moves made just for this class get a ⭐ button to keep them for later.
+function saveLibBtn(kind,i,ex) {
+  if (!ex || !ex._custom || typeof inLibrary!=='function' || inLibrary(kind,ex.name)) return '';
+  return '<button class="edit-btn save-lib-btn" data-onclick="saveToLibrary(\''+kind+'\','+i+')" title="Save to my library" aria-label="Save '+escapeHtml(ex.name)+' to my library">⭐</button>';
 }
 
 function removeExercise(idx){
@@ -2274,6 +2347,8 @@ function swapExercise(idx,opts){
     slot.cMode=ex.cMode; slot.cWork=ex.cWork; slot.cRest=ex.cRest; slot.cReps=ex.cReps;
     initCustomEx(slot,customCfg(),diff);
   }
+  if(ex.emomMin!=null)state.workout.exercises[idx].emomMin=ex.emomMin;
+  if(ex.emomReps!=null)state.workout.exercises[idx].emomReps=ex.emomReps;
   state.workout.muscleLoad=muscleLoadForExercises(state.workout.exercises);
   state.workout._edited=true;
   if(opts.silent)return;
@@ -2329,6 +2404,7 @@ function saveWorkout(name){
     includeCooldown:state.includeCooldown,
     warmupDuration:state.warmupDuration,
     ygigWorkSec:state.ygigWorkSec,
+    emomMode:state.emomMode==='reps'?'reps':'time',
     atHome:!!state.atHome,
     funTheme:(state.workout&&state.workout.funTheme)||''
   };
@@ -2530,6 +2606,7 @@ function applySavedWorkout(sw){
   if(sw.includeCooldown!=null)state.includeCooldown=sw.includeCooldown;
   if(sw.warmupDuration!=null)state.warmupDuration=sw.warmupDuration;else if(w&&w.warmupDuration!=null)state.warmupDuration=w.warmupDuration;
   if(sw.ygigWorkSec!=null)state.ygigWorkSec=sw.ygigWorkSec;else if(w&&w.ygigWorkSec!=null)state.ygigWorkSec=w.ygigWorkSec;
+  state.emomMode=(sw.emomMode||(w&&w.emomMode))==='reps'?'reps':'time';
   state.atHome=sw.atHome!=null?!!sw.atHome:!!(w&&w.atHome);
   {const chk=document.getElementById('at-home-chk');if(chk)chk.checked=state.atHome;}
   {const ft=(sw.funTheme!=null?sw.funTheme:(w&&w.funTheme))||'';
@@ -2751,13 +2828,19 @@ function buildMainSeq(w){
     for(let m=0;m<p.totalMins;m++){
       const g=p.groups[m%p.groups.length];
       const tag='MIN '+(m+1)+'/'+p.totalMins;
-      if(g.items.length===1){
+      if(p.mode==='reps'){
+        const reps=g.items.map(ex=>({reps:emomRepsOf(ex),name:ex.name}));
+        seq.push({phase:'work',label:tag+' — REPS, REST THE REMAINDER',
+          name:reps.map(r=>r.reps+' '+r.name).join(' + '),
+          prop:[...new Set(g.items.map(ex=>ex.propLabel).filter(Boolean))].join(' · '),
+          duration:60,round:m+1,totalRounds:p.totalMins,_exIdx:g.idxs[0],_emomReps:reps});
+      } else if(g.items.length===1){
         const ex=g.items[0];
-        seq.push({phase:'work',label:tag+' — WORK',name:ex.name,prop:ex.propLabel,duration:40,round:m+1,totalRounds:p.totalMins,_exIdx:g.start});
+        seq.push({phase:'work',label:tag+' — WORK',name:ex.name,prop:ex.propLabel,duration:40,round:m+1,totalRounds:p.totalMins,_exIdx:g.idxs[0]});
         seq.push({phase:'rest',label:'REST — NEXT MINUTE',name:'',prop:'',duration:20});
       } else {
         g.items.forEach((ex,gi)=>{
-          seq.push({phase:'work',label:tag+' — '+(gi+1)+'/2',name:ex.name,prop:ex.propLabel,duration:20,round:m+1,totalRounds:p.totalMins,_exIdx:g.start+gi});
+          seq.push({phase:'work',label:tag+' — '+(gi+1)+'/2',name:ex.name,prop:ex.propLabel,duration:20,round:m+1,totalRounds:p.totalMins,_exIdx:g.idxs[gi]});
           seq.push(gi===0
             ?{phase:'rest',label:'SWITCH',name:'',prop:'',duration:5}
             :{phase:'rest',label:'REST — NEXT MINUTE',name:'',prop:'',duration:15});
@@ -2915,8 +2998,14 @@ function nextWorkStep(seq,idx){
 function fxName(n){return typeof ihFunName==='function'?ihFunName(n):String(n==null?'':n);}
 function fxNameHtml(n){return typeof ihFunNameHtml==='function'?ihFunNameHtml(n):escapeHtml(n==null?'':n);}
 function fxThemedStep(step){return !!(step&&step.name&&!step._ladder&&(step.phase==='work'||step.phase==='warmup'||step.phase==='cooldown'));}
-function fxStepName(step){return fxThemedStep(step)?fxName(step.name):((step&&step.name)||'');}
-function fxStepNameHtml(step){return fxThemedStep(step)?fxNameHtml(step.name):escapeHtml((step&&step.name)||'');}
+function fxStepName(step){
+  if(step&&step._emomReps)return step._emomReps.map(r=>r.reps+' '+fxName(r.name)).join(' + ');
+  return fxThemedStep(step)?fxName(step.name):((step&&step.name)||'');
+}
+function fxStepNameHtml(step){
+  if(step&&step._emomReps)return step._emomReps.map(r=>escapeHtml(String(r.reps))+' '+fxNameHtml(r.name)).join(' + ');
+  return fxThemedStep(step)?fxNameHtml(step.name):escapeHtml((step&&step.name)||'');
+}
 // What the room needs to know is coming: during a rest that is the next move
 // and the kit to grab, not just the word "Rest".
 function nextUpLabel(seq,idx){
@@ -3470,6 +3559,35 @@ function exportTieredPDF() {
 }
 
 // YGIG time control
+// EMOM: timed work (40/20 or 20/5/20/15) or reps per minute.
+function setEmomMode(m){
+  m=m==='reps'?'reps':'time';
+  state.emomMode=m;
+  const w=state.workout;
+  if(!w||w.style!=='emom')return;
+  w.emomMode=m;
+  if(m==='reps')emomNormalizeMins(w);
+  w._edited=true;
+  syncPlanTiming(w);
+  renderPlanEditor();
+}
+function setEmomReps(i,v){
+  const w=state.workout,ex=w&&w.exercises&&w.exercises[i];
+  if(!ex)return;
+  ex.emomReps=Math.min(500,Math.max(1,parseInt(v,10)||emomRepsOf(ex)));
+  w._edited=true;
+  renderPlanEditor();
+}
+function setEmomMin(i,v){
+  const w=state.workout,ex=w&&w.exercises&&w.exercises[i];
+  if(!ex)return;
+  emomNormalizeMins(w);
+  ex.emomMin=Math.min(120,Math.max(1,parseInt(v,10)||1));
+  emomNormalizeMins(w);
+  w._edited=true;
+  syncPlanTiming(w);
+  renderPlanEditor();
+}
 function applyYgigWorkSec(v){
   state.ygigWorkSec = v;
   if (state.workout && state.workout.style==='ygig') {

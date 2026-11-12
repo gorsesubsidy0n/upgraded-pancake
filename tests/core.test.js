@@ -333,3 +333,64 @@ test('ygig never uses a capped or shared-station prop', () => {
     w.exercises.forEach(ex => assert.strictEqual(env.ctx.propCapacity(ex.prop), Infinity, ex.name + ' uses ' + ex.prop));
   }
 });
+
+const plain = v => JSON.parse(JSON.stringify(v));
+
+test('custom exercise saves to the library without plan-only fields', () => {
+  const env = loadCore();
+  const { ctx, state } = env;
+  generate(env, 'circuit', 30);
+  state.workout.exercises[0] = Object.assign({}, state.workout.exercises[0], { name: 'Teacher Special', _custom: true, _tmp: 1, prop: 'bodyweight', emomMin: 2, emomReps: 12 });
+  assert.strictEqual(ctx.inLibrary('main', 'Teacher Special'), false);
+  ctx.saveToLibrary('main', 0);
+  assert.strictEqual(ctx.inLibrary('main', 'Teacher Special'), true);
+  const saved = Object.values(state.customExercises).flat().find(e => e.name === 'Teacher Special');
+  ['reps', 'unit', 'seconds', 'propLabel', 'emomMin', 'emomReps', '_tmp'].forEach(k => assert.ok(!(k in saved), k + ' leaked'));
+  assert.strictEqual(saved._custom, true);
+  assert.ok(saved.repRange && saved.difficulty.length);
+  ctx.saveToLibrary('main', 0);
+  assert.strictEqual(Object.values(state.customExercises).flat().filter(e => e.name === 'Teacher Special').length, 1, 'no duplicates');
+});
+
+test('library upsert renames in place', () => {
+  const env = loadCore();
+  const list = [{ name: 'A', duration: 30 }, { name: 'B', duration: 30 }];
+  env.ctx.upsertCustom(list, { name: 'C', duration: 45 }, 'A');
+  assert.deepStrictEqual(plain(list.map(e => e.name)), ['C', 'B']);
+  assert.strictEqual(list[0].duration, 45);
+});
+
+test('emom reps mode stacks moves by minute with a full 60s each', () => {
+  const env = loadCore();
+  const { ctx, state } = env;
+  const w = generate(env, 'emom', 30);
+  w.emomMode = 'reps';
+  w.exercises = w.exercises.slice(0, 4);
+  w.exercises.forEach((e, i) => { e.emomMin = [3, 3, 7, null][i]; e.emomReps = 10 + i; });
+  const p = ctx.emomPlan(w);
+  assert.strictEqual(p.mode, 'reps');
+  assert.deepStrictEqual(plain(p.groups.map(g => g.idxs)), [[0, 1], [2], [3]], 'sorted, unset move gets its own minute');
+  const main = ctx.buildMainSeq(w);
+  assert.strictEqual(main.length, p.totalMins);
+  assert.ok(main.every(s => s.duration === 60 && s.phase === 'work' && s._emomReps && !s._ladder));
+  assert.strictEqual(main[0]._exIdx, 0);
+  assert.strictEqual(ctx.fxStepName(main[0]), `10 ${w.exercises[0].name} + 11 ${w.exercises[1].name}`);
+  ctx.emomNormalizeMins(w);
+  assert.deepStrictEqual(plain(w.exercises.map(e => e.emomMin)), [1, 1, 2, 3], 'gaps close up');
+  state.workout = w;
+  ctx.setEmomMin(3, 1);
+  assert.deepStrictEqual(plain(ctx.emomPlan(w).groups.map(g => g.idxs)), [[0, 1, 3], [2]]);
+  ctx.setEmomReps(2, 9999);
+  assert.strictEqual(w.exercises[2].emomReps, 500);
+});
+
+test('emom mode toggle persists and time mode is unchanged', () => {
+  const env = loadCore();
+  const { ctx, state } = env;
+  generate(env, 'emom', 30);
+  ctx.setEmomMode('reps');
+  assert.strictEqual(state.workout.emomMode, 'reps');
+  assert.ok(state.workout.exercises.every(e => e.emomMin > 0 && e.emomReps > 0));
+  ctx.setEmomMode('time');
+  assert.strictEqual(ctx.emomPlan(state.workout).mode, 'time');
+});

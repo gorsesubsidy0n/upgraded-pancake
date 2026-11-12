@@ -120,6 +120,14 @@ function goToExStep2(existingEx) {
       <div class="form-group"><label class="form-label">Coaching Notes (optional) — shown on the timer</label>
         <input type="text" id="ex-notes" class="form-input" placeholder="e.g. Keep hips square, drive through heel" value="${v(existingEx?.notes||existingEx?.cue)}"/></div>`;
   }
+  // Moves added or edited from a plan can be kept for future classes too.
+  const planEdit = String(state.modal.editTarget || '').startsWith('plan-');
+  if (state.modal.fromPlan || planEdit) {
+    const on = state.modal.fromPlan || !!existingEx?._custom;
+    body.innerHTML += `
+      <div class="form-group save-lib-group"><label class="diff-check save-lib-check">
+        <input type="checkbox" id="ex-save-lib" ${on?'checked':''}/> ⭐ Save to my library so I can use it in future classes</label></div>`;
+  }
 }
 function setDurChip(btn) {
   document.querySelectorAll('.dur-chip').forEach(b=>b.classList.remove('active'));
@@ -133,16 +141,11 @@ function saveExercise() {
   const target = state.modal.editTarget, editIndex = state.modal.editIndex;
   const fromPlan = state.modal.fromPlan === true && !!state.workout;
   const w = state.workout;
-  // Library edits are keyed by the old name, so a rename replaces the entry
-  // in place instead of leaving a duplicate behind.
-  const upsert = (list, entry, oldName) => {
-    const key = oldName != null ? oldName : entry.name;
-    let i = list.findIndex(e => e && e.name === key);
-    if (i < 0) i = list.findIndex(e => e && e.name === entry.name);
-    if (i >= 0) list[i] = { ...list[i], ...entry }; else list.push(entry);
-    for (let j = list.length - 1; j >= 0; j--) if (j !== i && i >= 0 && list[j] && list[j].name === entry.name) list.splice(j, 1);
-  };
-  let planTouched = false;
+  const upsert = upsertCustom;
+  // The checkbox only appears for plan adds/edits; library adds always save.
+  const libBox = document.getElementById('ex-save-lib');
+  const saveLib = libBox ? !!libBox.checked : true;
+  let planTouched = false, librarySaved = false;
 
   if (isWarmCool) {
     const raw = parseInt(document.getElementById('ex-duration')?.value, 10);
@@ -150,11 +153,15 @@ function saveExercise() {
     const note = document.getElementById('ex-note')?.value?.trim()||'';
     const entry = { name, duration, note, _custom:true };
     const list = cat==='warmup' ? (state.customWarmup = state.customWarmup || []) : (state.customCooldown = state.customCooldown || []);
-    if (target==='plan-warmup' && w?.warmup?.[editIndex]) { w.warmup[editIndex] = { ...w.warmup[editIndex], ...entry }; planTouched = true; }
-    else if (target==='plan-cooldown' && w?.cooldown?.[editIndex]) { w.cooldown[editIndex] = { ...w.cooldown[editIndex], ...entry }; planTouched = true; }
+    const planList = target==='plan-warmup' ? w?.warmup : target==='plan-cooldown' ? w?.cooldown : null;
+    if (planList && planList[editIndex]) {
+      const oldName = planList[editIndex].name;
+      planList[editIndex] = { ...planList[editIndex], ...entry }; planTouched = true;
+      if (saveLib) { upsert(list, entry, oldName); librarySaved = true; }
+    }
     else if (target==='lib-warmup' || target==='lib-cooldown') { upsert(list, entry, editIndex); }
     else {
-      upsert(list, entry);
+      if (saveLib) { upsert(list, entry); librarySaved = true; }
       if (fromPlan) { (cat==='warmup' ? (w.warmup = w.warmup || []) : (w.cooldown = w.cooldown || [])).push({ ...entry }); planTouched = true; }
     }
   } else {
@@ -177,18 +184,29 @@ function saveExercise() {
     const entry = { name, muscle, focus, prop, timed, difficulty, repRange, easier, harder, notes, _custom:true };
 
     if (target==='plan-main' && w?.exercises?.[editIndex]) {
+      const oldName = w.exercises[editIndex].name;
       w.exercises[editIndex]=buildPlanEntry(entry, w.exercises[editIndex], editIndex);
       planTouched = true;
+      if (saveLib) {
+        if (!state.customExercises[cat]) state.customExercises[cat]=[];
+        upsert(state.customExercises[cat], entry, oldName);
+        librarySaved = true;
+      }
     } else {
-      if (!state.customExercises[cat]) state.customExercises[cat]=[];
-      upsert(state.customExercises[cat], entry, target==='lib-main' ? editIndex : null);
+      if (saveLib || !fromPlan) {
+        if (!state.customExercises[cat]) state.customExercises[cat]=[];
+        upsert(state.customExercises[cat], entry, target==='lib-main' ? editIndex : null);
+        librarySaved = saveLib && fromPlan;
+      }
       if (fromPlan) {
         const diff=w.diff;
-        if (entry.difficulty.includes(diff)) {
+        // A one-off move is only for this class, so it goes in regardless of level.
+        if (entry.difficulty.includes(diff) || !saveLib) {
           w.exercises.push(buildPlanEntry(entry, null, w.exercises.length));
           planTouched = true;
           if (w.style==='ygig' && w.exercises.length % 2) showToast('Tip: ygig works in pairs — add a partner move for "'+name+'".');
         } else {
+          librarySaved = false;
           showToast(`"${name}" saved to your library, but it isn't marked ${DIFF_LABEL[diff]} so it wasn't added to this plan.`);
         }
       }
@@ -204,7 +222,56 @@ function saveExercise() {
   if (target && String(target).startsWith('lib-') || (!planTouched && document.getElementById('library-screen')?.classList?.contains('active'))) {
     if (typeof renderLibrary === 'function') renderLibrary(state.libraryFilter);
   }
-  showToast(`✅ "${name}" saved!`,'success');
+  if (planTouched && librarySaved) showToast(`✅ "${name}" saved to this class and your library`,'success');
+  else if (planTouched && libBox) showToast(`✅ "${name}" updated for this class only`,'success');
+  else if (planTouched || librarySaved || !fromPlan) showToast(`✅ "${name}" saved!`,'success');
+}
+
+// Library edits are keyed by the old name, so a rename replaces the entry in
+// place instead of leaving a duplicate behind.
+function upsertCustom(list, entry, oldName) {
+  const key = oldName != null ? oldName : entry.name;
+  let i = list.findIndex(e => e && e.name === key);
+  if (i < 0) i = list.findIndex(e => e && e.name === entry.name);
+  if (i >= 0) list[i] = { ...list[i], ...entry }; else list.push(entry);
+  for (let j = list.length - 1; j >= 0; j--) if (j !== i && i >= 0 && list[j] && list[j].name === entry.name) list.splice(j, 1);
+}
+
+function inLibrary(kind, name) {
+  if (!name) return false;
+  const has = list => (list || []).some(e => e && e.name === name);
+  if (kind === 'warmup') return has(typeof WARMUP_POOL !== 'undefined' && WARMUP_POOL) || has(state.customWarmup);
+  if (kind === 'cooldown') return has(typeof COOLDOWN_POOL !== 'undefined' && COOLDOWN_POOL) || has(state.customCooldown);
+  if (Object.values(state.customExercises || {}).some(has)) return true;
+  return typeof DB !== 'undefined' && Object.values(DB).some(has);
+}
+
+const PLAN_ONLY_FIELDS = ['reps','unit','seconds','propLabel','isPartner','muscles','cMode','cWork','cRest','cReps','emomMin','emomReps'];
+function saveToLibrary(kind, idx) {
+  const w = state.workout; if (!w) return;
+  const list = kind === 'warmup' ? w.warmup : kind === 'cooldown' ? w.cooldown : w.exercises;
+  const ex = list?.[idx]; if (!ex || !ex.name) return;
+  const entry = {};
+  for (const [k, v] of Object.entries(ex)) {
+    if (PLAN_ONLY_FIELDS.includes(k) || (k.startsWith('_') && k !== '_custom')) continue;
+    entry[k] = v;
+  }
+  entry._custom = true;
+  if (kind === 'warmup' || kind === 'cooldown') {
+    entry.duration = entry.duration || ex.seconds || 30;
+    upsertCustom(kind === 'warmup' ? (state.customWarmup = state.customWarmup || []) : (state.customCooldown = state.customCooldown || []), entry);
+  } else {
+    if (!Array.isArray(entry.difficulty) || !entry.difficulty.length) entry.difficulty = ['b','i','a'];
+    if (!entry.repRange) entry.repRange = { b:[8,10], i:[10,12], a:[12,15] };
+    if (!Array.isArray(entry.focus) || !entry.focus.length) entry.focus = ['full'];
+    if (!entry.prop) entry.prop = 'bodyweight';
+    const cat = typeof exCat === 'function' ? exCat(entry) : entry.prop;
+    if (!state.customExercises[cat]) state.customExercises[cat] = [];
+    upsertCustom(state.customExercises[cat], entry);
+  }
+  saveToStorage();
+  renderPlanEditor();
+  showToast(`⭐ "${ex.name}" saved to your library`,'success');
 }
 
 // Turn a library entry into a plan exercise with the timing this class style
